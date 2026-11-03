@@ -497,3 +497,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .rules-empty { color: var(--text-2); padding: 8px 0; }
 .danger-button.armed { background: #b3261e; color: #fff; border-color: #b3261e; }
+#ruleForm label { display: block; margin-top: 12px; }
+#ruleForm label > span { display: block; margin-bottom: 6px; font-weight: 700; }
+#ruleForm input, #ruleForm select { width: 100%; box-sizing: border-box; }
+#ruleForm label[hidden] { display: none; }
+#entryForm label[hidden] { display: none; }

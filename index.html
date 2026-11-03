@@ -305,7 +305,39 @@
       </label>
       <label>
         <span>名前</span>
-        <input id="ruleName" type="text" placeholder="例：平日ランチ / ケータイ">
+        <select id="ruleNamePreset">
+          <optgroup label="よく使う">
+            <option value="食費">食費</option>
+            <option value="外食">外食</option>
+            <option value="嗜好品">嗜好品</option>
+            <option value="日用品">日用品</option>
+            <option value="平日ランチ">平日ランチ</option>
+            <option value="交通費">交通費</option>
+            <option value="ガソリン">ガソリン</option>
+            <option value="美容・理容">美容・理容</option>
+            <option value="医療費">医療費</option>
+          </optgroup>
+          <optgroup label="固定費">
+            <option value="家賃">家賃</option>
+            <option value="光熱費">光熱費</option>
+            <option value="ケータイ">ケータイ</option>
+            <option value="通信費">通信費</option>
+            <option value="サブスク">サブスク</option>
+            <option value="保険">保険</option>
+            <option value="ジム">ジム</option>
+            <option value="駐車場">駐車場</option>
+            <option value="ローン">ローン</option>
+          </optgroup>
+          <optgroup label="支払い">
+            <option value="当月クレジット引き落とし">当月クレジット引き落とし</option>
+            <option value="その他支払い">その他支払い</option>
+          </optgroup>
+          <option value="__custom">自由に入力</option>
+        </select>
+      </label>
+      <label id="ruleNameWrap" hidden>
+        <span>名前（自由入力）</span>
+        <input id="ruleName" type="text" placeholder="例：ジム会費">
       </label>
       <label>
         <span>金額（円）</span>

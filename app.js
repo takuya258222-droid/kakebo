@@ -81,7 +81,7 @@ const els = {};
   "formBook", "storeHints", "entryFormTitle", "editEntryButton",
   "rulesButton", "rulesDialog", "closeRulesButton", "rulesList", "ruleForm",
   "ruleKind", "ruleName", "ruleAmount", "ruleCount", "ruleCountWrap", "ruleError",
-  "ruleDayWrap", "ruleDay"
+  "ruleDayWrap", "ruleDay", "ruleNamePreset", "ruleNameWrap"
 ].forEach((id) => { els[id] = document.getElementById(id); });
 
 function readJsonStorage(key, fallback) {
@@ -1385,13 +1385,19 @@ els.ruleCountWrap.hidden = !meta.needsCount;
 els.ruleDayWrap.hidden = !meta.needsDay;
 }
 
+function updateRuleNameVisibility() {
+els.ruleNameWrap.hidden = els.ruleNamePreset.value !== "__custom";
+}
+
 els.rulesButton.addEventListener("click", () => {
 renderRulesList();
 updateRuleCountVisibility();
+updateRuleNameVisibility();
 if (typeof els.rulesDialog.showModal === "function") els.rulesDialog.showModal();
 });
 els.closeRulesButton.addEventListener("click", () => els.rulesDialog.close());
 els.ruleKind.addEventListener("change", updateRuleCountVisibility);
+els.ruleNamePreset.addEventListener("change", updateRuleNameVisibility);
 els.rulesList.addEventListener("click", async (event) => {
 const button = event.target.closest("[data-rule-key]");
 if (!button) return;
@@ -1420,7 +1426,7 @@ const meta = RULE_KINDS[kind] || {};
 const rule = {
 book: state.book,
 kind,
-name: els.ruleName.value.trim(),
+name: els.ruleNamePreset.value === "__custom" ? els.ruleName.value.trim() : els.ruleNamePreset.value,
 amount: Number(els.ruleAmount.value) || 0,
 count: meta.needsCount ? (Number(els.ruleCount.value) || 0) : 0,
 month: kind === "once" ? state.selectedMonth : "",

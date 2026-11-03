@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>家計簿</title>
+<style>
+  :root{ --bg:#f7f7f4; --card:#fff; --text:#222; --muted:#777; --line:#e6e6e0; --accent:#3d9970; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#17181a; --card:#222428; --text:#eee; --muted:#9a9ea6; --line:#33363b; --accent:#5cc491; } }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; background:var(--bg); color:var(--text); }
+  main{ max-width:560px; margin:0 auto; padding:16px 14px 40px; }
+  h1{ font-size:20px; margin:6px 0 2px; }
+  .updated{ color:var(--muted); font-size:12px; margin-bottom:14px; }
+  select{ font-size:16px; padding:8px 10px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); width:100%; margin-bottom:14px; }
+  .total-card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; text-align:center; margin-bottom:14px; }
+  .total-card .label{ color:var(--muted); font-size:13px; }
+  .total-card .amount{ font-size:36px; font-weight:700; margin-top:4px; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px 18px; margin-bottom:14px; }
+  .card h2{ font-size:15px; margin:0 0 12px; }
+  .bar-row{ display:flex; height:14px; border-radius:7px; overflow:hidden; margin-bottom:14px; background:var(--line); }
+  .bar-row div{ height:100%; }
+  table{ width:100%; border-collapse:collapse; font-size:15px; }
+  td,th{ padding:8px 2px; border-bottom:1px solid var(--line); }
+  td.num, th.num{ text-align:right; font-variant-numeric:tabular-nums; }
+  tr.sum td{ font-weight:700; border-bottom:none; }
+  .entry{ padding:10px 0; border-bottom:1px solid var(--line); }
+  .entry:last-child{ border-bottom:none; }
+  .entry .row1{ display:flex; justify-content:space-between; font-size:15px; }
+  .entry .store{ font-weight:600; }
+  .entry .meta{ color:var(--muted); font-size:12px; margin-top:2px; }
+  .empty{ color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>家計簿</h1>
+  <div class="updated" id="updated"></div>
+  <select id="month"></select>
+  <div class="total-card">
+    <div class="label" id="total-label">今月の合計</div>
+    <div class="amount" id="total">-</div>
+  </div>
+  <div class="card">
+    <h2>項目別（バランスシート）</h2>
+    <div class="bar-row" id="bar"></div>
+    <table><tbody id="bs"></tbody></table>
+  </div>
+  <div class="card">
+    <h2>明細</h2>
+    <div id="entries"></div>
+  </div>
+</main>
+<script>
+const COLORS = {"食費":"#3d9970","外食":"#e67e22","日用品":"#3498db","嗜好品":"#9b59b6","その他":"#95a5a6"};
+const yen = n => "¥" + n.toLocaleString("ja-JP");
+let DATA = null;
+function render(ym){
+  const m = DATA.months[ym]; if(!m) return;
+  const t = m.totals, total = t["合計"] || 0;
+  document.getElementById("total-label").textContent = ym.replace("-","年") + "月の合計";
+  document.getElementById("total").textContent = yen(total);
+  const bar = document.getElementById("bar"); bar.innerHTML = "";
+  for(const c of DATA.categories){
+    const v = t[c] || 0; if(!v || !total) continue;
+    const d = document.createElement("div");
+    d.style.width = (v/total*100) + "%"; d.style.background = COLORS[c]; d.title = c;
+    bar.appendChild(d);
+  }
+  const bs = document.getElementById("bs"); bs.innerHTML = "";
+  for(const c of DATA.categories){
+    const v = t[c] || 0, pct = total ? (v/total*100).toFixed(1) : "0.0";
+    bs.innerHTML += `<tr><td>${c}</td><td class="num">${yen(v)}</td><td class="num">${pct}%</td></tr>`;
+  }
+  bs.innerHTML += `<tr class="sum"><td>合計</td><td class="num">${yen(total)}</td><td class="num">100%</td></tr>`;
+  const es = document.getElementById("entries"); es.innerHTML = "";
+  if(!m.entries.length){ es.innerHTML = '<div class="empty">明細はまだありません</div>'; }
+  for(const e of m.entries){
+    es.innerHTML += `<div class="entry"><div class="row1"><span class="store">${e.store}</span><span>${yen(e.amount)}</span></div><div class="meta">${e.date} ・ ${e.category}${e.memo ? " ・ " + e.memo : ""}</div></div>`;
+  }
+}
+fetch("data.json").then(r => r.json()).then(d => {
+  DATA = d;
+  document.getElementById("updated").textContent = "最終更新: " + d.updated_at;
+  const sel = document.getElementById("month");
+  const keys = Object.keys(d.months).sort().reverse();
+  for(const k of keys){
+    const o = document.createElement("option"); o.value = k; o.textContent = k.replace("-","年") + "月"; sel.appendChild(o);
+  }
+  sel.addEventListener("change", () => render(sel.value));
+  render(keys[0]);
+}).catch(() => { document.getElementById("total").textContent = "読み込みエラー"; });
+</script>
+</body>
+</html>

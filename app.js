@@ -49,6 +49,8 @@ const state = {
   book: "共有",
   editingRow: null,
   rules: [],
+  savings: { movements: [], goals: [] },
+  savingsMode: false,
   stateHash: "",
   currentEntry: null,
   pollTimer: null
@@ -81,7 +83,11 @@ const els = {};
   "formBook", "storeHints", "entryFormTitle", "editEntryButton",
   "rulesButton", "rulesDialog", "closeRulesButton", "rulesList", "ruleForm",
   "ruleKind", "ruleName", "ruleAmount", "ruleCount", "ruleCountWrap", "ruleError",
-  "ruleDayWrap", "ruleDay", "ruleNamePreset", "ruleNameWrap"
+  "ruleDayWrap", "ruleDay", "ruleNamePreset", "ruleNameWrap",
+  "savingsTotal", "savingsMonthNet", "savingsPace", "savingsCount", "savingsNote",
+  "savingsGoals", "goalForm", "goalName", "goalTarget", "savingsList",
+  "savingFormDialog", "savingForm", "closeSavingFormButton", "savingDate", "savingType",
+  "savingAmount", "savingGoalSelect", "savingMemo", "savingError", "savingSubmitButton"
 ].forEach((id) => { els[id] = document.getElementById(id); });
 
 function readJsonStorage(key, fallback) {
@@ -505,21 +511,35 @@ function applyEntries(entries) {
     state.selectedMonth = dataMonths.sort().reverse()[0] || current;
     state.selectedDate = latestSpendDate(state.selectedMonth);
   }
-  state.stateHash = JSON.stringify([state.entries, state.budgets, state.rules]);
+  state.stateHash = JSON.stringify([state.entries, state.budgets, state.rules, state.savings]);
 }
 
 function updateBookSwitch() {
   document.querySelectorAll("[data-book]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.book === state.book);
+    const active = state.savingsMode
+      ? button.dataset.book === "__savings"
+      : button.dataset.book === state.book;
+    button.classList.toggle("active", active);
   });
 }
 
 function selectBook(book) {
+  if (book === "__savings") {
+    state.savingsMode = true;
+    updateBookSwitch();
+    updateConnectionUi();
+    setView("savings");
+    renderSavings();
+    return;
+  }
   if (!BOOKS.includes(book)) return;
+  state.savingsMode = false;
   state.book = book;
   try { localStorage.setItem("kakeibo.book", book); } catch (_) {}
   state.selectedDate = latestSpendDate(state.selectedMonth);
   updateBookSwitch();
+  updateConnectionUi();
+  if (state.view === "savings") setView("home");
   renderAll();
 }
 
@@ -552,7 +572,7 @@ function updateConnectionUi() {
   els.loginCard.hidden = !configured || state.connected || !state.needsPin;
   els.syncBar.hidden = !state.connected;
   els.addEntryButton.hidden = !state.connected;
-  els.receiptButton.hidden = !state.connected;
+  els.receiptButton.hidden = !state.connected || state.savingsMode;
   els.syncBadge.textContent = state.connected ? "共有中" : "閲覧モード";
   els.budgetNote.textContent = state.connected
     ? "二人で共有されます"
@@ -578,6 +598,8 @@ async function connectWithPin(pin, silent = false) {
   writeJsonStorage("kakeibo.budgets", state.budgets);
   state.rules = Array.isArray(json.forecastRules) ? json.forecastRules : [];
   writeJsonStorage("kakeibo.rules", state.rules);
+  state.savings = normalizeSavings(json.savings);
+  writeJsonStorage("kakeibo.savings", state.savings);
   applyEntries((json.entries || []).map(normalizeApiEntry));
   finishLoad(`共有データ ・ ${timeLabel()} 同期`);
   startPolling();
@@ -590,15 +612,18 @@ async function refreshShared(silent = true) {
     const json = await apiGetState();
     const nextBudgets = flattenBudgets(json.budgets);
     const nextRules = Array.isArray(json.forecastRules) ? json.forecastRules : [];
+    const nextSavings = normalizeSavings(json.savings);
     const nextEntries = (json.entries || []).map(normalizeApiEntry)
       .filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry.date));
-    const hash = JSON.stringify([nextEntries, nextBudgets, nextRules]);
+    const hash = JSON.stringify([nextEntries, nextBudgets, nextRules, nextSavings]);
     state.connected = true;
     if (hash !== state.stateHash) {
       state.budgets = nextBudgets;
       writeJsonStorage("kakeibo.budgets", state.budgets);
       state.rules = nextRules;
       writeJsonStorage("kakeibo.rules", state.rules);
+      state.savings = nextSavings;
+      writeJsonStorage("kakeibo.savings", state.savings);
       state.categories = [...DEFAULT_CATEGORIES];
       applyEntries(nextEntries);
       buildMonthSelect();
@@ -652,6 +677,7 @@ async function loadData(showLoading = true) {
     state.categories = converted.categories;
     state.budgets = flattenLocalBudgets(readJsonStorage("kakeibo.budgets", {}));
     state.rules = readJsonStorage("kakeibo.rules", []);
+    state.savings = normalizeSavings(readJsonStorage("kakeibo.savings", null));
     applyEntries(converted.entries);
     finishLoad(converted.updated_at ? `最終更新 ${converted.updated_at}` : "保存済みデータ");
   } catch (error) {
@@ -696,6 +722,7 @@ function latestSpendDate(ym) {
 }
 
 function renderAll() {
+  renderSavings();
   renderHome();
   renderDaily();
   renderEntries();
@@ -1234,7 +1261,14 @@ document.querySelectorAll("[data-chart-mode]").forEach((button) => {
 button.addEventListener("click", () => { state.chartMode = button.dataset.chartMode; renderChart(monthStats(state.selectedMonth));});
 });
 document.querySelectorAll("[data-view]").forEach((button) => {
-button.addEventListener("click", () => setView(button.dataset.view));
+button.addEventListener("click", () => {
+    if (state.savingsMode) {
+      state.savingsMode = false;
+      updateBookSwitch();
+      updateConnectionUi();
+    }
+    setView(button.dataset.view);
+  });
 });
 document.querySelectorAll("[data-book]").forEach((button) => {
 button.addEventListener("click", () => selectBook(button.dataset.book));
@@ -1317,6 +1351,7 @@ loadData(false);
 showToast("共有接続を解除しました");
 });
 els.addEntryButton.addEventListener("click", () => {
+if (state.savingsMode) { openSavingForm(); return; }
 els.formError.hidden = true;
 state.editingRow = null;
 els.entryFormTitle.textContent = "支出を記録";
@@ -1547,6 +1582,203 @@ const view = location.hash.replace("#", "");
 if (["home", "daily", "entries", "months"].includes(view)) setView(view, false);
 });
 }
+
+/* ================= 貯金 ================= */
+function normalizeSavings(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const movements = Array.isArray(source.movements) ? source.movements
+    .filter((m) => m && /^\d{4}-\d{2}-\d{2}$/.test(String(m.date || "")) && Number(m.amount) > 0)
+    .map((m) => ({
+      row: m.row || m.id || null,
+      date: String(m.date),
+      type: m.type === "出金" ? "出金" : "入金",
+      amount: Math.round(Number(m.amount) || 0),
+      memo: String(m.memo || ""),
+      goal: String(m.goal || "")
+    })) : [];
+  const goals = Array.isArray(source.goals) ? source.goals
+    .filter((g) => g && g.name && Number(g.target) > 0)
+    .map((g) => ({ row: g.row || null, name: String(g.name), target: Math.round(Number(g.target) || 0) })) : [];
+  return { movements, goals };
+}
+
+function savingsBalance(goalName) {
+  return state.savings.movements
+    .filter((m) => !goalName || m.goal === goalName)
+    .reduce((sum, m) => sum + (m.type === "出金" ? -m.amount : m.amount), 0);
+}
+
+function savingsMonthNet(ym) {
+  return state.savings.movements
+    .filter((m) => m.date.startsWith(ym))
+    .reduce((sum, m) => sum + (m.type === "出金" ? -m.amount : m.amount), 0);
+}
+
+function savingsMonthlyAverage() {
+  const now = new Date();
+  const nets = [];
+  for (let i = 0; i < 3; i += 1) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const net = savingsMonthNet(key);
+    if (i === 0 || state.savings.movements.some((m) => m.date.startsWith(key))) nets.push(net);
+  }
+  if (!nets.length) return 0;
+  return Math.round(nets.reduce((a, b) => a + b, 0) / nets.length);
+}
+
+function renderSavings() {
+  if (!els.savingsTotal) return;
+  const balance = savingsBalance("");
+  els.savingsTotal.textContent = yen(balance);
+  const nowKey = monthKeyOf(new Date());
+  els.savingsMonthNet.textContent = signedYen(savingsMonthNet(nowKey));
+  const average = savingsMonthlyAverage();
+  els.savingsPace.textContent = average > 0 ? `月 ${yen(average)}` : "—";
+  els.savingsCount.textContent = `${state.savings.movements.length}件`;
+  const nearest = state.savings.goals
+    .map((g) => ({ goal: g, current: savingsBalance(g.name) }))
+    .filter((x) => x.current < x.goal.target)
+    .sort((a, b) => (b.current / b.goal.target) - (a.current / a.goal.target))[0];
+  els.savingsNote.textContent = nearest && average > 0
+    ? `「${nearest.goal.name}」まであと ${yen(nearest.goal.target - nearest.current)}。今のペースだと約${Math.max(1, Math.ceil((nearest.goal.target - nearest.current) / average))}ヶ月で到達見込みです。`
+    : (state.savings.goals.length ? "目標を設定すると、到達までの見込みが表示されます。" : "下のフォームから貯金の目標を設定できます。");
+
+  els.savingsGoals.innerHTML = state.savings.goals.length ? "" : `<p class="empty-note">目標はまだありません</p>`;
+  state.savings.goals.forEach((goal) => {
+    const current = savingsBalance(goal.name);
+    const pct = Math.min(100, Math.max(0, current / goal.target * 100));
+    const row = document.createElement("div");
+    row.className = "goal-row";
+    row.innerHTML = `
+      <div class="goal-row-head"><strong></strong><span>${yen(current)} / ${yen(goal.target)}</span></div>
+      <div class="progress-track"><div style="width:${pct.toFixed(1)}%"></div></div>
+      <p class="progress-caption">${current >= goal.target ? "達成しました！" : `達成率 ${pct.toFixed(0)}% ・ あと ${yen(goal.target - current)}`}</p>
+      <div class="goal-actions"><button class="mini-button danger" type="button">この目標を削除</button></div>`;
+    row.querySelector("strong").textContent = goal.name;
+    row.querySelector(".mini-button").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (!state.connected) { showToast("共有に接続すると目標を変更できます"); return; }
+      if (button.dataset.armed !== "1") {
+        button.dataset.armed = "1";
+        button.textContent = `「${goal.name}」を削除します（もう一度タップで確定）`;
+        window.setTimeout(() => { button.dataset.armed = ""; button.textContent = "この目標を削除"; }, 4000);
+        return;
+      }
+      try {
+        await apiPost({ action: "setSavingGoal", name: goal.name, target: 0 });
+        await refreshShared(false);
+        showToast("目標を削除しました（貯金の記録は残ります）");
+      } catch (error) { showToast("削除に失敗しました"); }
+    });
+    els.savingsGoals.append(row);
+  });
+
+  const sorted = [...state.savings.movements].sort((a, b) => (b.date + String(b.row || "")).localeCompare(a.date + String(a.row || "")));
+  els.savingsList.innerHTML = sorted.length ? "" : `<p class="empty-note">貯金の記録はまだありません</p>`;
+  sorted.slice(0, 60).forEach((movement) => {
+    const row = document.createElement("div");
+    row.className = "saving-row";
+    const title = [movement.goal, movement.memo].filter(Boolean).join(" ・ ") || (movement.type === "入金" ? "貯金" : "取り崩し");
+    row.innerHTML = `
+      <div class="saving-row-main"><strong></strong><span>${formatShortDate(movement.date)} ・ ${movement.type}</span></div>
+      <span class="saving-amount ${movement.type === "入金" ? "in" : "out"}">${movement.type === "入金" ? "+" : "−"}${yen(movement.amount)}</span>
+      <button class="mini-button danger" type="button">削除</button>`;
+    row.querySelector("strong").textContent = title;
+    row.querySelector(".mini-button").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (!state.connected) { showToast("共有に接続すると削除できます"); return; }
+      if (!movement.row) return;
+      if (button.dataset.armed !== "1") {
+        button.dataset.armed = "1";
+        button.textContent = "確定";
+        window.setTimeout(() => { button.dataset.armed = ""; button.textContent = "削除"; }, 4000);
+        return;
+      }
+      try {
+        await apiPost({ action: "deleteSaving", row: movement.row });
+        await refreshShared(false);
+        showToast("貯金の記録を削除しました");
+      } catch (error) { showToast("削除に失敗しました"); }
+    });
+    els.savingsList.append(row);
+  });
+
+  els.savingGoalSelect.innerHTML = "";
+  const common = document.createElement("option");
+  common.value = "";
+  common.textContent = "共通（目標なし）";
+  els.savingGoalSelect.append(common);
+  state.savings.goals.forEach((goal) => {
+    const option = document.createElement("option");
+    option.value = goal.name;
+    option.textContent = goal.name;
+    els.savingGoalSelect.append(option);
+  });
+}
+
+function openSavingForm() {
+  els.savingError.hidden = true;
+  const now = new Date();
+  els.savingDate.value = formatDateKey(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  els.savingType.value = "入金";
+  els.savingAmount.value = "";
+  els.savingMemo.value = "";
+  renderSavings();
+  if (typeof els.savingFormDialog.showModal === "function") els.savingFormDialog.showModal();
+}
+
+els.closeSavingFormButton.addEventListener("click", () => els.savingFormDialog.close());
+els.savingForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const entry = {
+    date: els.savingDate.value,
+    type: els.savingType.value,
+    amount: Math.round(Number(els.savingAmount.value) || 0),
+    goal: els.savingGoalSelect.value,
+    memo: els.savingMemo.value.trim()
+  };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.date) || !(entry.amount > 0)) {
+    els.savingError.textContent = "日付と金額を確認してください";
+    els.savingError.hidden = false;
+    return;
+  }
+  els.savingSubmitButton.disabled = true;
+  try {
+    if (state.connected) {
+      await apiPost({ action: "addSaving", entry });
+      els.savingFormDialog.close();
+      await refreshShared(false);
+      showToast("貯金を記録しました");
+    } else {
+      state.savings.movements.push({ ...entry, row: null });
+      writeJsonStorage("kakeibo.savings", state.savings);
+      els.savingFormDialog.close();
+      renderSavings();
+      showToast("この端末に保存しました（接続すると共有）");
+    }
+  } catch (error) {
+    els.savingError.textContent = "保存に失敗しました";
+    els.savingError.hidden = false;
+  } finally {
+    els.savingSubmitButton.disabled = false;
+  }
+});
+
+els.goalForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const name = els.goalName.value.trim();
+  const target = Math.round(Number(els.goalTarget.value) || 0);
+  if (!name) { showToast("目標の名前を入れてください"); return; }
+  if (!state.connected) { showToast("共有に接続すると目標を保存できます"); return; }
+  try {
+    await apiPost({ action: "setSavingGoal", name, target });
+    els.goalName.value = "";
+    els.goalTarget.value = "";
+    await refreshShared(false);
+    showToast(target > 0 ? "目標を保存しました" : "目標を削除しました");
+  } catch (error) { showToast("目標の保存に失敗しました"); }
+});
 
 function init() {
 initTheme();

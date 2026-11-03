@@ -47,6 +47,7 @@
       <button type="button" data-book="共有" class="active">共有</button>
       <button type="button" data-book="卓也">卓也</button>
       <button type="button" data-book="あや">あや</button>
+      <button type="button" data-book="__savings">貯金</button>
     </div>
 
     <div id="loadingState" class="state-card" role="status">
@@ -273,6 +274,59 @@
         <div id="monthlyCards" class="monthly-cards"></div>
       </section>
 
+      <section class="view-panel" id="view-savings" data-panel="savings" aria-label="貯金" hidden>
+        <article class="hero-card">
+          <p class="hero-label">貯金残高</p>
+          <p class="hero-amount" id="savingsTotal">¥0</p>
+          <div class="stats-grid">
+            <div><span>今月の貯金</span><strong id="savingsMonthNet">¥0</strong></div>
+            <div><span>月平均ペース</span><strong id="savingsPace">¥0</strong></div>
+            <div><span>記録</span><strong id="savingsCount">0件</strong></div>
+          </div>
+          <p class="hero-sub" id="savingsNote"></p>
+        </article>
+
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <h2>貯金の目標</h2>
+              <p>目標ごとに進み具合が見られます</p>
+            </div>
+          </div>
+          <div id="savingsGoals"></div>
+          <form id="goalForm" class="goal-form">
+            <label>
+              <span>目標の名前</span>
+              <input id="goalName" type="text" list="goalNameHints" placeholder="例：旅行">
+              <datalist id="goalNameHints">
+                <option value="旅行"></option>
+                <option value="車"></option>
+                <option value="結婚"></option>
+                <option value="マイホーム"></option>
+                <option value="教育"></option>
+                <option value="予備費"></option>
+                <option value="家具・家電"></option>
+              </datalist>
+            </label>
+            <label>
+              <span>目標金額（円）</span>
+              <input id="goalTarget" type="number" min="0" step="1" inputmode="numeric" placeholder="300000">
+            </label>
+            <button class="secondary-button" type="submit">目標を保存（0円で削除）</button>
+          </form>
+        </article>
+
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <h2>貯金の記録</h2>
+              <p>右下の「＋ 記録する」から入金・出金を追加できます</p>
+            </div>
+          </div>
+          <div id="savingsList"></div>
+        </article>
+      </section>
+
       <footer class="app-footer">
         <p>合言葉で接続すると、二人とも手入力・削除・予算設定ができて、互いのスマホに自動で反映されます。レシート写真からも今まで通り記録されます。</p>
         <p id="dataNote"></p>
@@ -353,6 +407,40 @@
       </label>
       <p class="form-error" id="ruleError" role="alert" hidden></p>
       <button class="primary-button" id="ruleSubmitButton" type="submit">ルールを追加</button>
+    </form>
+  </dialog>
+
+  <dialog id="savingFormDialog" aria-labelledby="savingFormTitle">
+    <form id="savingForm" method="dialog" class="entry-form">
+      <div class="dialog-close-row">
+        <h2 id="savingFormTitle">貯金を記録</h2>
+        <button class="icon-button" id="closeSavingFormButton" type="button" aria-label="閉じる">×</button>
+      </div>
+      <label>
+        <span>日付</span>
+        <input id="savingDate" type="date" required>
+      </label>
+      <label>
+        <span>種別</span>
+        <select id="savingType">
+          <option value="入金">入金（貯金する）</option>
+          <option value="出金">出金（取り崩す）</option>
+        </select>
+      </label>
+      <label>
+        <span>金額（円）</span>
+        <input id="savingAmount" type="number" min="1" step="1" inputmode="numeric" placeholder="10000" required>
+      </label>
+      <label>
+        <span>目標</span>
+        <select id="savingGoalSelect"></select>
+      </label>
+      <label>
+        <span>メモ</span>
+        <input id="savingMemo" type="text" placeholder="例：給料から天引き">
+      </label>
+      <p class="form-error" id="savingError" role="alert" hidden></p>
+      <button class="primary-button" id="savingSubmitButton" type="submit">記録する</button>
     </form>
   </dialog>
 

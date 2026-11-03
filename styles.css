@@ -448,7 +448,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .fab.receipt[hidden] { display: none; }
 .book-switch {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 4px;
   margin-bottom: 12px;
   padding: 4px;
@@ -502,3 +502,19 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 #ruleForm input, #ruleForm select { width: 100%; box-sizing: border-box; }
 #ruleForm label[hidden] { display: none; }
 #entryForm label[hidden] { display: none; }
+.goal-form { display: grid; gap: 10px; margin-top: 14px; }
+.goal-form label { display: grid; gap: 6px; }
+.goal-form label span { color: var(--muted); font-size: 12px; font-weight: 700; }
+.goal-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.goal-row-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.goal-row-head strong { font-size: 1rem; }
+.goal-row-head span { color: var(--text-2); font-size: .86rem; white-space: nowrap; }
+.goal-row .progress-track { margin-top: 8px; }
+.goal-actions { margin-top: 6px; text-align: right; }
+.saving-row { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); align-items: center; }
+.saving-row-main { min-width: 0; }
+.saving-row-main strong { display: block; }
+.saving-row-main span { color: var(--text-2); font-size: .84rem; }
+.saving-amount { font-weight: 800; white-space: nowrap; }
+.saving-amount.in { color: var(--brand-strong); }
+.saving-amount.out { color: #b3261e; }

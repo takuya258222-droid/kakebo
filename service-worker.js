@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "kakeibo-app-v2";
+const CACHE_NAME = "kakeibo-app-v3";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -31,27 +31,17 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
-  const isData = url.pathname.endsWith("/data.json") || url.pathname.endsWith("data.json");
-  const isNavigation = request.mode === "navigate";
+  // 共有API（別ドメイン）はキャッシュしない
+  if (url.origin !== self.location.origin) return;
 
-  if (isData || isNavigation) {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-          return response;
-        })
-        .catch(() => caches.match(request).then((cached) => cached || caches.match("./index.html")))
-    );
-    return;
-  }
-
+  // 同一ドメインは常にネットワーク優先（アプリ更新をすぐ反映し、オフライン時のみキャッシュ）
   event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request).then((response) => {
-      const copy = response.clone();
-      caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-      return response;
-    }))
+    fetch(request)
+      .then((response) => {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        return response;
+      })
+      .catch(() => caches.match(request).then((cached) => cached || caches.match("./index.html")))
   );
 });

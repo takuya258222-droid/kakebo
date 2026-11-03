@@ -42,6 +42,12 @@
       <button class="today-button" id="currentMonthButton" type="button">今月</button>
     </section>
 
+    <div class="book-switch" role="tablist" aria-label="帳簿の切り替え">
+      <button type="button" data-book="共有" class="active">共有</button>
+      <button type="button" data-book="卓也">卓也</button>
+      <button type="button" data-book="あや">あや</button>
+    </div>
+
     <div id="loadingState" class="state-card" role="status">
       <div class="spinner" aria-hidden="true"></div>
       <p>家計簿を読み込んでいます</p>
@@ -54,6 +60,28 @@
     </div>
 
     <div id="appContent" hidden>
+      <div class="sync-bar" id="syncBar" hidden>
+        <span id="syncText">共有に接続中</span>
+        <button class="text-button" id="disconnectButton" type="button">接続を解除</button>
+      </div>
+
+      <article class="card login-card" id="loginCard" hidden>
+        <div class="section-heading">
+          <div>
+            <h2>二人の家計簿に接続</h2>
+            <p>合言葉を入れると、手入力・削除・予算の共有が使えます</p>
+          </div>
+        </div>
+        <form id="pinForm" class="pin-form">
+          <label>
+            <span>合言葉</span>
+            <input id="pinInput" type="password" autocomplete="current-password" placeholder="合言葉を入力">
+          </label>
+          <p class="form-error" id="pinError" hidden></p>
+          <button class="primary-button" type="submit">接続する</button>
+        </form>
+      </article>
+
       <section class="view-panel" id="view-home" data-panel="home" aria-label="ホーム">
         <article class="hero-card">
           <div class="hero-top">
@@ -62,7 +90,7 @@
               <h1 id="monthTotal">¥0</h1>
               <p class="hero-sub" id="monthComparison">前月比 -</p>
             </div>
-            <span class="live-badge">共有中</span>
+            <span class="live-badge" id="syncBadge">閲覧モード</span>
           </div>
           <div class="stats-grid">
             <div><span>1日平均</span><strong id="dailyAverage">¥0</strong></div>
@@ -70,13 +98,15 @@
             <div><span>記録</span><strong id="entryCount">0件</strong></div>
             <div><span>月末予測</span><strong id="forecastAmount">-</strong></div>
           </div>
+          <p class="hero-sub" id="forecastNote"></p>
+          <p class="hero-sub" id="diningStatus"></p>
         </article>
 
         <article class="card budget-card">
           <div class="section-heading">
             <div>
               <h2>今月の予算</h2>
-              <p>この端末だけに保存されます</p>
+              <p id="budgetNote">二人で共有されます</p>
             </div>
             <button class="text-button" id="editBudgetButton" type="button">設定</button>
           </div>
@@ -242,11 +272,15 @@
       </section>
 
       <footer class="app-footer">
-        <p>このページは閲覧用です。新しい支出は、レシート写真を送ると家計簿へ反映されます。</p>
+        <p>合言葉で接続すると、二人とも手入力・削除・予算設定ができて、互いのスマホに自動で反映されます。レシート写真からも今まで通り記録されます。</p>
         <p id="dataNote"></p>
       </footer>
     </div>
   </main>
+
+  <button id="receiptButton" class="fab receipt" type="button" hidden>レシート撮影</button>
+  <input id="receiptInput" type="file" accept="image/*" capture="environment" hidden>
+  <button id="addEntryButton" class="fab" type="button" hidden>＋ 記録する</button>
 
   <nav class="bottom-nav" aria-label="家計簿メニュー">
     <button type="button" data-view="home" class="active">
@@ -273,6 +307,54 @@
       <button class="icon-button" value="close" aria-label="閉じる">×</button>
     </form>
     <div id="entryDialogContent"></div>
+    <button id="editEntryButton" class="secondary-button detail-edit" type="button" hidden>この明細を編集</button>
+    <button id="deleteEntryButton" class="danger-button" type="button" hidden>この明細を削除</button>
+  </dialog>
+
+  <dialog id="entryFormDialog" class="entry-dialog">
+    <form id="entryForm" class="entry-form">
+      <div class="dialog-close-row">
+        <h2 id="entryFormTitle">支出を記録</h2>
+        <button class="icon-button" id="closeEntryFormButton" type="button" aria-label="閉じる">×</button>
+      </div>
+      <label>
+        <span>帳簿</span>
+        <select id="formBook">
+          <option>共有</option>
+          <option>卓也</option>
+          <option>あや</option>
+        </select>
+      </label>
+      <label>
+        <span>日付</span>
+        <input id="formDate" type="date" required>
+      </label>
+      <label>
+        <span>店名・内容</span>
+        <input id="formStore" type="text" placeholder="例：スーパー" list="storeHints" required>
+        <datalist id="storeHints"></datalist>
+      </label>
+      <label>
+        <span>項目</span>
+        <select id="formCategory">
+          <option>食費</option>
+          <option>外食</option>
+          <option>日用品</option>
+          <option>嗜好品</option>
+          <option>その他</option>
+        </select>
+      </label>
+      <label>
+        <span>金額（円）</span>
+        <input id="formAmount" type="number" min="1" step="1" inputmode="numeric" placeholder="例：1200" required>
+      </label>
+      <label>
+        <span>メモ（任意）</span>
+        <input id="formMemo" type="text" placeholder="例：夕飯の材料">
+      </label>
+      <p class="form-error" id="formError" hidden></p>
+      <button class="primary-button" id="formSubmitButton" type="submit">記録する</button>
+    </form>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

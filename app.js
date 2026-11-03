@@ -9,6 +9,14 @@ const CATEGORY_COLORS = {
 };
 const DEFAULT_CATEGORIES = Object.keys(CATEGORY_COLORS);
 const WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"];
+const API_URL = "https://script.google.com/macros/s/AKfycbz46Hemu-bMLzM0EspM2ILboj6JHziOzyCC-cuONgefk_ZD5EMNTnKzcvMakO-qurax/exec";
+const BOOKS = ["共有", "卓也", "あや"];
+// 月末予測に使う本人の傾向（2026-11-03 本人申告）: 買い物は12日に1回、外食は週2.5回（昼・夜別に実績単価で計算、初期値8,000円）、嗜好品は週3回（平均600円）
+const FORECAST_PATTERNS = [
+  { category: "食費", label: "買い物", perDays: 12 },
+  { category: "外食", label: "外食", perWeek: 2.5, fixedTicket: 8000, liveTicket: true },
+  { category: "嗜好品", label: "嗜好品", perWeek: 3, fixedTicket: 600 }
+];
 
 const state = {
   data: null,
@@ -22,8 +30,21 @@ const state = {
   sort: "date-desc",
   chartMode: "daily",
   view: "home",
-  budgets: readJsonStorage("kakeibo.budgets", {})
+  budgets: readJsonStorage("kakeibo.budgets", {}),
+  pin: "",
+  connected: false,
+  needsPin: false,
+  book: "共有",
+  editingRow: null,
+  stateHash: "",
+  currentEntry: null,
+  pollTimer: null
 };
+try { state.pin = localStorage.getItem("kakeibo.pin") || ""; } catch (_) { state.pin = ""; }
+try {
+  const savedBook = localStorage.getItem("kakeibo.book") || "";
+  if (BOOKS.includes(savedBook)) state.book = savedBook;
+} catch (_) {}
 
 const els = {};
 [
@@ -39,7 +60,12 @@ const els = {};
   "monthlyTrend", "annualSummary", "monthlyCards", "dataNote", "themeButton", "refreshButton",
   "retryButton", "copySummaryButton", "downloadCsvButton", "entryDialog", "entryDialogContent",
   "toast", "editBudgetButton", "budgetEmpty", "budgetContent", "budgetRemaining", "budgetDetail",
-  "budgetProgress", "budgetCaption", "budgetForm", "budgetInput", "clearBudgetButton"
+  "budgetProgress", "budgetCaption", "budgetForm", "budgetInput", "clearBudgetButton",
+  "syncBadge", "syncBar", "syncText", "disconnectButton", "loginCard", "pinForm", "pinInput", "forecastNote",
+  "pinError", "budgetNote", "addEntryButton", "entryFormDialog", "entryForm", "formDate", "diningStatus",
+  "formStore", "formCategory", "formAmount", "formMemo", "formError", "formSubmitButton",
+  "closeEntryFormButton", "deleteEntryButton", "receiptButton", "receiptInput",
+  "formBook", "storeHints", "entryFormTitle", "editEntryButton"
 ].forEach((id) => { els[id] = document.getElementById(id); });
 
 function readJsonStorage(key, fallback) {
@@ -130,7 +156,35 @@ function sum(items) {
 }
 
 function entriesForMonth(ym = state.selectedMonth) {
-  return state.entries.filter((entry) => monthKeyFromDate(entry.date) === ym);
+  return state.entries.filter((entry) => monthKeyFromDate(entry.date) === ym && entry.book === state.book);
+}
+
+function budgetKey(ym = state.selectedMonth, book = state.book) {
+  return `${book}|${ym}`;
+}
+
+function flattenBudgets(nested) {
+  const flat = {};
+  Object.entries(nested || {}).forEach(([book, months]) => {
+    if (months && typeof months === "object") {
+      Object.entries(months).forEach(([ym, amount]) => {
+        const value = Number(amount) || 0;
+        if (value > 0) flat[`${book}|${ym}`] = value;
+      });
+    }
+  });
+  return flat;
+}
+
+function flattenLocalBudgets(stored) {
+  const flat = {};
+  Object.entries(stored || {}).forEach(([key, amount]) => {
+    const value = Number(amount) || 0;
+    if (!(value > 0)) return;
+    if (key.includes("|")) flat[key] = value;
+    else if (/^\d{4}-\d{2}$/.test(key)) flat[`共有|${key}`] = value;
+  });
+  return flat;
 }
 
 function categoryTotals(items) {
@@ -157,8 +211,86 @@ function monthStats(ym) {
   const nowKey = browserMonthKey();
   const elapsed = ym === nowKey ? new Date().getDate() : daysInMonth(ym);
   const dailyAverage = elapsed > 0 ? total / elapsed : 0;
-  const forecast = ym === nowKey && elapsed > 0 ? Math.round(dailyAverage * daysInMonth(ym)) : null;
-  return { items, total, byDate, byCategory, prevTotal, elapsed, dailyAverage, forecast };
+  const fc = ym === nowKey && elapsed > 0 ? forecastForMonth(ym, items, byCategory, total, elapsed) : null;
+  const forecast = fc ? fc.amount : null;
+  const forecastNotes = fc ? fc.notes : [];
+  const forecastFallback = fc ? fc.usedFallback : false;
+  const dining = fc ? fc.dining : null;
+  return { items, total, byDate, byCategory, prevTotal, elapsed, dailyAverage, forecast, forecastNotes, forecastFallback, dining };
+}
+
+function forecastForMonth(ym, items, byCategory, total, elapsed) {
+  const dim = daysInMonth(ym);
+  const patternCategories = new Set(FORECAST_PATTERNS.map((p) => p.category));
+  const fallbackTicket = items.length ? total / items.length : 0;
+  let forecast = 0;
+  let usedFallback = false;
+  let dining = null;
+  const notes = [];
+  FORECAST_PATTERNS.forEach((pattern) => {
+    const catItems = items.filter((entry) => entry.category === pattern.category);
+    const catTotal = byCategory[pattern.category] || 0;
+    const trips = new Set(catItems.map((entry) => `${entry.date}|${entry.store}`)).size;
+    const expected = pattern.perDays ? dim / pattern.perDays : pattern.perWeek * dim / 7;
+
+    if (pattern.category === "外食") {
+      // 昼と夜で単価が大きく違うため、メモの「昼」「夜」で分けて着地を計算する
+      const buckets = {
+        lunch: { total: 0, tripKeys: new Set() },
+        dinner: { total: 0, tripKeys: new Set() },
+        other: { total: 0, tripKeys: new Set() }
+      };
+      catItems.forEach((entry) => {
+        const key = /昼/.test(entry.memo) ? "lunch" : /夜/.test(entry.memo) ? "dinner" : "other";
+        buckets[key].total += entry.amount;
+        buckets[key].tripKeys.add(`${entry.date}|${entry.store}`);
+      });
+      const pooledTicket = trips > 0 ? catTotal / trips : (pattern.fixedTicket || fallbackTicket);
+      const defaultShares = { lunch: 0.8, dinner: 0.2, other: 0 };
+      let dLanding = 0;
+      let dRemaining = 0;
+      const parts = {};
+      Object.entries(buckets).forEach(([key, bucket]) => {
+        const bTrips = bucket.tripKeys.size;
+        const share = trips > 0 ? bTrips / trips : defaultShares[key];
+        const bRemaining = Math.max(0, expected * share - bTrips);
+        const bTicket = bTrips > 0 ? bucket.total / bTrips : pooledTicket;
+        const bLanding = bucket.total + bRemaining * bTicket;
+        dLanding += bLanding;
+        dRemaining += bRemaining;
+        parts[key] = { trips: bTrips, avg: Math.round(bTicket), landing: Math.round(bLanding) };
+      });
+      forecast += dLanding;
+      notes.push(`外食 あと約${Math.round(dRemaining)}回`);
+      const expectedByNow = pattern.perWeek * elapsed / 7;
+      dining = {
+        trips,
+        avgTicket: Math.round(pooledTicket),
+        expectedByNow,
+        paceOver: trips - expectedByNow >= 1,
+        landing: Math.round(dLanding),
+        lunch: parts.lunch,
+        dinner: parts.dinner,
+        other: parts.other
+      };
+      return;
+    }
+
+    const remaining = Math.max(0, expected - trips);
+    let ticket;
+    if (pattern.liveTicket && trips > 0) ticket = catTotal / trips;
+    else if (pattern.fixedTicket) ticket = pattern.fixedTicket;
+    else ticket = trips > 0 ? catTotal / trips : fallbackTicket;
+    if (!pattern.fixedTicket && !pattern.liveTicket && trips === 0 && remaining > 0 && fallbackTicket > 0) usedFallback = true;
+    const landing = catTotal + remaining * ticket;
+    forecast += landing;
+    notes.push(`${pattern.label} あと約${Math.round(remaining)}回`);
+  });
+  const othersTotal = items
+    .filter((entry) => !patternCategories.has(entry.category))
+    .reduce((acc, entry) => acc + entry.amount, 0);
+  forecast += elapsed > 0 ? othersTotal * dim / elapsed : othersTotal;
+  return { amount: Math.round(forecast), notes, usedFallback, dining };
 }
 
 function showToast(message) {
@@ -198,6 +330,7 @@ function normalizeEntry(entry, index) {
   const date = String(entry.date || "").slice(0, 10);
   const store = String(entry.store || entry.title || "不明");
   const receiptId = entry.receipt_id || entry.receiptId || `${date}-${store}`;
+  const book = BOOKS.includes(String(entry.book || "")) ? String(entry.book) : "共有";
   return {
     id: String(entry.id || `entry-${index + 1}`),
     date,
@@ -205,8 +338,175 @@ function normalizeEntry(entry, index) {
     category: String(entry.category || "その他"),
     amount: Number(entry.amount) || 0,
     memo: String(entry.memo || ""),
-    receipt_id: String(receiptId)
+    receipt_id: String(receiptId),
+    book
   };
+}
+
+function apiError(code) {
+  const error = new Error(code || "api_error");
+  error.code = code || "api_error";
+  return error;
+}
+
+async function apiGetState() {
+  const url = `${API_URL}?action=state&pin=${encodeURIComponent(state.pin)}&ts=${Date.now()}`;
+  const response = await fetch(url, { cache: "no-store" });
+  const json = await response.json();
+  if (!json.ok) throw apiError(json.error);
+  return json;
+}
+
+async function apiPost(payload) {
+  const response = await fetch(API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ pin: state.pin, ...payload })
+  });
+  const json = await response.json();
+  if (!json.ok) throw apiError(json.error);
+  return json;
+}
+
+function normalizeApiEntry(entry) {
+  const base = normalizeEntry(entry, 0);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(base.date)) {
+    const parsed = new Date(entry.date);
+    if (!isNaN(parsed.getTime())) {
+      base.date = formatDateKey(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate());
+    }
+  }
+  base.row = Number(entry.row) || null;
+  base.id = base.row ? `row-${base.row}` : base.id;
+  base.receipt_id = base.row ? `row-${base.row}` : base.receipt_id;
+  return base;
+}
+
+function applyEntries(entries) {
+  state.entries = entries.filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry.date));
+  state.entries.forEach((entry) => {
+    if (!state.categories.includes(entry.category)) state.categories.push(entry.category);
+  });
+  const dataMonths = [...new Set(state.entries.map((entry) => monthKeyFromDate(entry.date)))];
+  const current = browserMonthKey();
+  state.months = [...new Set([...dataMonths, current])].sort().reverse();
+  if (!state.selectedMonth || !state.months.includes(state.selectedMonth)) {
+    state.selectedMonth = dataMonths.sort().reverse()[0] || current;
+    state.selectedDate = latestSpendDate(state.selectedMonth);
+  }
+  state.stateHash = JSON.stringify([state.entries, state.budgets]);
+}
+
+function updateBookSwitch() {
+  document.querySelectorAll("[data-book]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.book === state.book);
+  });
+}
+
+function selectBook(book) {
+  if (!BOOKS.includes(book)) return;
+  state.book = book;
+  try { localStorage.setItem("kakeibo.book", book); } catch (_) {}
+  state.selectedDate = latestSpendDate(state.selectedMonth);
+  updateBookSwitch();
+  renderAll();
+}
+
+function buildStoreHints() {
+  if (!els.storeHints) return;
+  const stores = [...new Set(state.entries.filter((entry) => entry.book === state.book).map((entry) => entry.store))];
+  els.storeHints.innerHTML = stores.map((store) => `<option value="${escapeHtml(store)}"></option>`).join("");
+}
+
+function finishLoad(updatedText) {
+  els.updatedLabel.textContent = updatedText;
+  els.dataNote.textContent = `登録されている明細は全${state.entries.length}件です。`;
+  els.loadingState.hidden = true;
+  els.errorState.hidden = true;
+  els.appContent.hidden = false;
+  updateConnectionUi();
+  updateBookSwitch();
+  buildMonthSelect();
+  buildCategoryChips();
+  renderAll();
+}
+
+function timeLabel() {
+  const now = new Date();
+  return `${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}`;
+}
+
+function updateConnectionUi() {
+  const configured = Boolean(API_URL);
+  els.loginCard.hidden = !configured || state.connected || !state.needsPin;
+  els.syncBar.hidden = !state.connected;
+  els.addEntryButton.hidden = !state.connected;
+  els.receiptButton.hidden = !state.connected;
+  els.syncBadge.textContent = state.connected ? "共有中" : "閲覧モード";
+  els.budgetNote.textContent = state.connected
+    ? "二人で共有されます"
+    : "この端末だけに保存されます（接続すると共有）";
+  if (state.connected) els.syncText.textContent = `共有に接続中 ・ ${timeLabel()} 同期`;
+}
+
+function setPin(pin) {
+  state.pin = pin || "";
+  try {
+    if (state.pin) localStorage.setItem("kakeibo.pin", state.pin);
+    else localStorage.removeItem("kakeibo.pin");
+  } catch (_) {}
+}
+
+async function connectWithPin(pin, silent = false) {
+  setPin(pin);
+  const json = await apiGetState();
+  state.connected = true;
+  state.needsPin = false;
+  state.categories = [...DEFAULT_CATEGORIES];
+  state.budgets = flattenBudgets(json.budgets);
+  writeJsonStorage("kakeibo.budgets", state.budgets);
+  applyEntries((json.entries || []).map(normalizeApiEntry));
+  finishLoad(`共有データ ・ ${timeLabel()} 同期`);
+  startPolling();
+  if (!silent) showToast("共有に接続しました");
+}
+
+async function refreshShared(silent = true) {
+  if (!API_URL || !state.connected) return;
+  try {
+    const json = await apiGetState();
+    const nextBudgets = flattenBudgets(json.budgets);
+    const nextEntries = (json.entries || []).map(normalizeApiEntry)
+      .filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry.date));
+    const hash = JSON.stringify([nextEntries, nextBudgets]);
+    state.connected = true;
+    if (hash !== state.stateHash) {
+      state.budgets = nextBudgets;
+      writeJsonStorage("kakeibo.budgets", state.budgets);
+      state.categories = [...DEFAULT_CATEGORIES];
+      applyEntries(nextEntries);
+      buildMonthSelect();
+      buildCategoryChips();
+      renderAll();
+      if (!silent) showToast("新しいデータに更新しました");
+    }
+    updateConnectionUi();
+  } catch (error) {
+    if (error.code === "unauthorized" || error.code === "pin_not_set") {
+      state.connected = false;
+      state.needsPin = true;
+      setPin("");
+      updateConnectionUi();
+      showToast("合言葉が必要になりました。再接続してください");
+    }
+  }
+}
+
+function startPolling() {
+  if (state.pollTimer) return;
+  state.pollTimer = window.setInterval(() => {
+    if (!document.hidden) refreshShared(true);
+  }, 15000);
 }
 
 async function loadData(showLoading = true) {
@@ -215,6 +515,18 @@ async function loadData(showLoading = true) {
     els.errorState.hidden = true;
     els.appContent.hidden = true;
   }
+  if (API_URL) {
+    try {
+      await connectWithPin(state.pin, true);
+      return;
+    } catch (error) {
+      state.connected = false;
+      if (error.code === "unauthorized" || error.code === "pin_not_set") {
+        state.needsPin = true;
+        setPin("");
+      }
+    }
+  }
   try {
     const response = await fetch(`data.json?ts=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -222,27 +534,9 @@ async function loadData(showLoading = true) {
     const converted = convertData(raw);
     state.data = converted;
     state.categories = converted.categories;
-    state.entries = converted.entries.filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry.date));
-    state.entries.forEach((entry) => {
-      if (!state.categories.includes(entry.category)) state.categories.push(entry.category);
-    });
-
-    const dataMonths = [...new Set(state.entries.map((entry) => monthKeyFromDate(entry.date)))];
-    const current = browserMonthKey();
-    state.months = [...new Set([...dataMonths, current])].sort().reverse();
-    if (!state.selectedMonth || !state.months.includes(state.selectedMonth)) {
-      state.selectedMonth = dataMonths.sort().reverse()[0] || current;
-    }
-    state.selectedDate = latestSpendDate(state.selectedMonth);
-
-    els.updatedLabel.textContent = converted.updated_at ? `最終更新 ${converted.updated_at}` : "共有データ";
-    els.dataNote.textContent = `全${state.entries.length}件の明細を表示しています。`;
-    els.loadingState.hidden = true;
-    els.errorState.hidden = true;
-    els.appContent.hidden = false;
-    buildMonthSelect();
-    buildCategoryChips();
-    renderAll();
+    state.budgets = flattenLocalBudgets(readJsonStorage("kakeibo.budgets", {}));
+    applyEntries(converted.entries);
+    finishLoad(converted.updated_at ? `最終更新 ${converted.updated_at}` : "保存済みデータ");
   } catch (error) {
     console.error(error);
     els.loadingState.hidden = true;
@@ -289,11 +583,12 @@ function renderAll() {
   renderDaily();
   renderEntries();
   renderMonths();
+  buildStoreHints();
 }
 
 function renderHome() {
   const stats = monthStats(state.selectedMonth);
-  els.heroMonthLabel.textContent = `${monthLabel(state.selectedMonth)}の支出`;
+  els.heroMonthLabel.textContent = `${state.book} ・ ${monthLabel(state.selectedMonth)}の支出`;
   els.monthTotal.textContent = yen(stats.total);
   if (stats.prevTotal > 0) {
     const diff = stats.total - stats.prevTotal;
@@ -308,6 +603,23 @@ function renderHome() {
   els.activeDays.textContent = `${stats.byDate.size}日`;
   els.entryCount.textContent = `${stats.items.length}件`;
   els.forecastAmount.textContent = stats.forecast == null ? "-" : yen(stats.forecast);
+  els.forecastNote.textContent = stats.forecastNotes && stats.forecastNotes.length
+    ? `予測の内訳: ${stats.forecastNotes.join(" ・ ")}（${stats.forecastFallback ? "買い物単価は全体の平均で仮置き" : "外食は実績の平均単価、嗜好品は申告の平均単価で計算"}）`
+    : "";
+  if (stats.dining) {
+    const d = stats.dining;
+    const dayparts = [];
+    if (d.lunch && d.lunch.trips > 0) dayparts.push(`昼 平均 ${yen(d.lunch.avg)}`);
+    if (d.dinner && d.dinner.trips > 0) dayparts.push(`夜 平均 ${yen(d.dinner.avg)}`);
+    const detail = dayparts.length ? `（${dayparts.join(" ・ ")}）` : ` ・ 平均 ${yen(d.avgTicket)}/回`;
+    els.diningStatus.textContent = d.paceOver
+      ? `外食ペースオーバー: 今月${d.trips}回（週2.5回ペース超過）・ 着地見込み ${yen(d.landing)}${detail}`
+      : `外食: 今月${d.trips}回 ・ 着地見込み ${yen(d.landing)}${detail}`;
+    els.diningStatus.classList.toggle("pace-over", d.paceOver);
+  } else {
+    els.diningStatus.textContent = "";
+    els.diningStatus.classList.remove("pace-over");
+  }
   renderBudget(stats);
   renderCategories(stats);
   renderChart(stats);
@@ -315,7 +627,7 @@ function renderHome() {
 }
 
 function renderBudget(stats) {
-  const budget = Number(state.budgets[state.selectedMonth]) || 0;
+  const budget = Number(state.budgets[budgetKey()]) || 0;
   const hasBudget = budget > 0;
   els.budgetEmpty.hidden = hasBudget;
   els.budgetContent.hidden = !hasBudget;
@@ -658,7 +970,10 @@ els.monthlyCards.appendChild(card);
 }
 
 function openEntryDialog(entry) {
-const sameReceipt = state.entries.filter((item) => item.receipt_id === entry.receipt_id && item.date === entry.date)
+state.currentEntry = entry;
+els.deleteEntryButton.hidden = !(state.connected && entry.row);
+els.editEntryButton.hidden = !(state.connected && entry.row);
+const sameReceipt = state.entries.filter((item) => item.date === entry.date && (item.receipt_id === entry.receipt_id || item.store === entry.store))
 .sort((a, b) => b.amount - a.amount);
 const receiptTotal = sum(sameReceipt);
 els.entryDialogContent.innerHTML = `
@@ -666,6 +981,7 @@ els.entryDialogContent.innerHTML = `
 <div class="detail-rows">
 <div class="detail-row"><span>日付</span><div>${dateLabel(entry.date, true)}</div></div>
 <div class="detail-row"><span>店名</span><div>${escapeHtml(entry.store)}</div></div>
+<div class="detail-row"><span>帳簿</span><div>${escapeHtml(entry.book || "共有")}</div></div>
 <div class="detail-row"><span>メモ</span><div>${escapeHtml(entry.memo || "なし")}</div></div>
 <div class="detail-row"><span>レシート合計</span><div>${yen(receiptTotal)}</div></div>
 </div>
@@ -677,7 +993,7 @@ if (typeof els.entryDialog.showModal === "function") els.entryDialog.showModal()
 function monthlySummaryText() {
 const stats = monthStats(state.selectedMonth);
 const lines = [
-`${monthLabel(state.selectedMonth)}`,
+`【家計簿・${state.book}】${monthLabel(state.selectedMonth)}`,
 `合計：${yen(stats.total)}`,
 ...state.categories.map((category) => `${category}：${yen(stats.byCategory[category] || 0)}`),
 `使った日：${stats.byDate.size}日`,
@@ -707,8 +1023,8 @@ showToast("コピーできませんでした");
 
 function downloadCsv() {
 const items = filteredEntries();
-const rows = [["日付", "店名・内容", "項目", "金額", "メモ"]];
-items.forEach((entry) => rows.push([entry.date, entry.store, entry.category, entry.amount, entry.memo]));
+const rows = [["日付", "店名・内容", "項目", "金額", "メモ", "帳簿"]];
+items.forEach((entry) => rows.push([entry.date, entry.store, entry.category, entry.amount, entry.memo, entry.book || "共有"]));
 const csv = `\uFEFF${rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n")}`;
 const blob = new Blob([csv], { type: "text/csv;charset=utf-8"});
 const url = URL.createObjectURL(blob);
@@ -720,6 +1036,30 @@ a.click();
 a.remove();
 URL.revokeObjectURL(url);
 showToast("CSVを保存しました");
+}
+
+function fileToResizedDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const maxDim = 1280;
+        const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.naturalWidth * scale);
+        canvas.height = Math.round(img.naturalHeight * scale);
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        reject(error);
+      }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image_load_failed")); };
+    img.src = url;
+  });
 }
 
 function applyTheme(theme) {
@@ -760,13 +1100,19 @@ buildMonthSelect();
 }
 selectMonth(current);
 });
-els.refreshButton.addEventListener("click", async () => { await loadData(false); showToast("最新データに更新しました");});
+els.refreshButton.addEventListener("click", async () => {
+if (state.connected) { await refreshShared(false); }
+else { await loadData(false); showToast("最新データに更新しました"); }
+});
 els.retryButton.addEventListener("click", () => loadData(true));
 document.querySelectorAll("[data-chart-mode]").forEach((button) => {
 button.addEventListener("click", () => { state.chartMode = button.dataset.chartMode; renderChart(monthStats(state.selectedMonth));});
 });
 document.querySelectorAll("[data-view]").forEach((button) => {
 button.addEventListener("click", () => setView(button.dataset.view));
+});
+document.querySelectorAll("[data-book]").forEach((button) => {
+button.addEventListener("click", () => selectBook(button.dataset.book));
 });
 els.clearDayButton.addEventListener("click", () => { state.selectedDate = null; renderAll();});
 els.clearActiveDayButton.addEventListener("click", () => { state.selectedDate = null; renderAll();});
@@ -785,25 +1131,166 @@ renderAll();
 els.copySummaryButton.addEventListener("click", copySummary);
 els.downloadCsvButton.addEventListener("click", downloadCsv);
 els.editBudgetButton.addEventListener("click", () => {
-const budget = Number(state.budgets[state.selectedMonth]) || "";
+const budget = Number(state.budgets[budgetKey()]) || "";
 els.budgetInput.value = budget;
 els.budgetForm.hidden =!els.budgetForm.hidden;
 if (!els.budgetForm.hidden) els.budgetInput.focus();
 });
-els.budgetForm.addEventListener("submit", (event) => {
+els.budgetForm.addEventListener("submit", async (event) => {
 event.preventDefault();
 const value = Number(els.budgetInput.value) || 0;
-if (value > 0) state.budgets[state.selectedMonth] = value;
-else delete state.budgets[state.selectedMonth];
+if (state.connected) {
+try {
+await apiPost({ action: "setBudget", month: state.selectedMonth, amount: value, book: state.book });
+await refreshShared(true);
+showToast(value > 0 ? "予算を共有しました" : "予算を削除しました");
+} catch (_) { showToast("予算を保存できませんでした"); }
+return;
+}
+if (value > 0) state.budgets[budgetKey()] = value;
+else delete state.budgets[budgetKey()];
 writeJsonStorage("kakeibo.budgets", state.budgets);
 renderBudget(monthStats(state.selectedMonth));
 showToast(value > 0? "予算を保存しました": "予算を削除しました");
 });
-els.clearBudgetButton.addEventListener("click", () => {
-delete state.budgets[state.selectedMonth];
+els.clearBudgetButton.addEventListener("click", async () => {
+if (state.connected) {
+try {
+await apiPost({ action: "setBudget", month: state.selectedMonth, amount: 0, book: state.book });
+await refreshShared(true);
+showToast("予算を削除しました");
+} catch (_) { showToast("予算を削除できませんでした"); }
+return;
+}
+delete state.budgets[budgetKey()];
 writeJsonStorage("kakeibo.budgets", state.budgets);
 renderBudget(monthStats(state.selectedMonth));
 showToast("予算を削除しました");
+});
+els.pinForm.addEventListener("submit", async (event) => {
+event.preventDefault();
+const pin = els.pinInput.value.trim();
+if (!pin) return;
+els.pinError.hidden = true;
+try {
+await connectWithPin(pin);
+els.pinInput.value = "";
+} catch (error) {
+setPin("");
+state.connected = false;
+els.pinError.textContent = error.code === "pin_not_set"
+? "合言葉がまだ設定されていません。管理者に連絡してください。"
+: "合言葉が違うか、接続できませんでした。";
+els.pinError.hidden = false;
+}
+});
+els.disconnectButton.addEventListener("click", () => {
+state.connected = false;
+setPin("");
+if (state.pollTimer) { window.clearInterval(state.pollTimer); state.pollTimer = null; }
+loadData(false);
+showToast("共有接続を解除しました");
+});
+els.addEntryButton.addEventListener("click", () => {
+els.formError.hidden = true;
+state.editingRow = null;
+els.entryFormTitle.textContent = "支出を記録";
+els.formSubmitButton.textContent = "記録する";
+const now = new Date();
+els.formDate.value = formatDateKey(now.getFullYear(), now.getMonth() + 1, now.getDate());
+els.formStore.value = "";
+els.formAmount.value = "";
+els.formMemo.value = "";
+els.formCategory.value = "食費";
+els.formBook.value = state.book;
+if (typeof els.entryFormDialog.showModal === "function") els.entryFormDialog.showModal();
+});
+els.editEntryButton.addEventListener("click", () => {
+const entry = state.currentEntry;
+if (!entry || !entry.row) return;
+els.entryDialog.close();
+state.editingRow = entry.row;
+els.entryFormTitle.textContent = "明細を編集";
+els.formSubmitButton.textContent = "更新する";
+els.formError.hidden = true;
+els.formDate.value = entry.date;
+els.formStore.value = entry.store;
+els.formCategory.value = entry.category;
+els.formAmount.value = entry.amount;
+els.formMemo.value = entry.memo || "";
+els.formBook.value = entry.book || state.book;
+if (typeof els.entryFormDialog.showModal === "function") els.entryFormDialog.showModal();
+});
+els.closeEntryFormButton.addEventListener("click", () => {
+state.editingRow = null;
+els.entryFormDialog.close();
+});
+els.entryForm.addEventListener("submit", async (event) => {
+event.preventDefault();
+const entry = {
+date: els.formDate.value,
+store: els.formStore.value.trim(),
+category: els.formCategory.value,
+amount: Number(els.formAmount.value) || 0,
+memo: els.formMemo.value.trim(),
+book: els.formBook.value
+};
+if (!entry.date || !entry.store || !(entry.amount > 0)) {
+els.formError.textContent = "日付・店名・金額を入れてください。";
+els.formError.hidden = false;
+return;
+}
+els.formSubmitButton.disabled = true;
+try {
+if (state.editingRow) {
+await apiPost({ action: "updateEntry", row: state.editingRow, entry });
+showToast("更新しました");
+} else {
+await apiPost({ action: "addEntry", entry });
+showToast("記録しました");
+}
+state.editingRow = null;
+els.entryFormDialog.close();
+if (entry.book !== state.book) selectBook(entry.book);
+state.selectedMonth = monthKeyFromDate(entry.date);
+state.selectedDate = entry.date;
+buildMonthSelect();
+await refreshShared(true);
+setView("daily");
+} catch (_) {
+els.formError.textContent = "保存できませんでした。接続を確認してください。";
+els.formError.hidden = false;
+} finally {
+els.formSubmitButton.disabled = false;
+}
+});
+els.deleteEntryButton.addEventListener("click", async () => {
+const entry = state.currentEntry;
+if (!entry || !entry.row) return;
+if (!window.confirm(`${dateLabel(entry.date)} の「${entry.store}」${yen(entry.amount)} を削除しますか？`)) return;
+try {
+await apiPost({ action: "deleteEntry", row: entry.row });
+els.entryDialog.close();
+showToast("削除しました");
+await refreshShared(true);
+} catch (_) { showToast("削除できませんでした"); }
+});
+els.receiptButton.addEventListener("click", () => els.receiptInput.click());
+els.receiptInput.addEventListener("change", async () => {
+const file = els.receiptInput.files && els.receiptInput.files[0];
+els.receiptInput.value = "";
+if (!file) return;
+try {
+showToast("レシートを送信しています");
+const dataUrl = await fileToResizedDataUrl(file);
+await apiPost({ action: "uploadReceipt", image: dataUrl, book: state.book });
+showToast("レシートを送りました。内容はMuseが読み取って記録します");
+} catch (_) {
+showToast("レシートを送れませんでした");
+}
+});
+document.addEventListener("visibilitychange", () => {
+if (!document.hidden) refreshShared(true);
 });
 window.addEventListener("hashchange", () => {
 const view = location.hash.replace("#", "");

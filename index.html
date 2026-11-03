@@ -101,6 +101,7 @@
           </div>
           <p class="hero-sub" id="forecastNote"></p>
           <p class="hero-sub" id="diningStatus"></p>
+          <button class="secondary-button hero-rules-button" id="rulesButton" type="button">予測ルールを編集</button>
         </article>
 
         <article class="card budget-card">
@@ -280,6 +281,49 @@
   </main>
 
   <button id="receiptButton" class="fab receipt" type="button" hidden>レシート撮影</button>
+  <dialog id="rulesDialog" aria-labelledby="rulesTitle">
+    <div class="dialog-close-row">
+      <h2 id="rulesTitle">予測ルール</h2>
+      <button class="icon-button" id="closeRulesButton" type="button" aria-label="閉じる">×</button>
+    </div>
+    <p class="dialog-note">帳簿ごとに、月末予測の計算ルールを自分で決められます。定期ルールがある帳簿（個人用など）は「今までの累計 ＋ ルールで計算した残りの見込み」で予測します。ランニングコスト（家賃・サブスクなどの毎月の固定費）と特別費用は、どの帳簿でも予測に上乗せされます。</p>
+    <div id="rulesList"></div>
+    <form id="ruleForm">
+      <h3>ルールを追加</h3>
+      <label>
+        <span>種類</span>
+        <select id="ruleKind">
+          <option value="weekday">平日のみ・毎日（例：平日ランチ800円）</option>
+          <option value="daily">毎日</option>
+          <option value="weekend">土日のみ・毎日</option>
+          <option value="weekly">週に○回</option>
+          <option value="monthly">月に○回</option>
+          <option value="once">特別費用（表示中の月だけ）</option>
+          <option value="fixed">特別費用（毎月）</option>
+          <option value="running">ランニングコスト（毎月・家賃やサブスクなど）</option>
+        </select>
+      </label>
+      <label>
+        <span>名前</span>
+        <input id="ruleName" type="text" placeholder="例：平日ランチ / ケータイ">
+      </label>
+      <label>
+        <span>金額（円）</span>
+        <input id="ruleAmount" type="number" min="1" step="1" inputmode="numeric" placeholder="800" required>
+      </label>
+      <label id="ruleCountWrap" hidden>
+        <span>回数</span>
+        <input id="ruleCount" type="number" min="1" step="1" inputmode="numeric" placeholder="3">
+      </label>
+      <label id="ruleDayWrap" hidden>
+        <span>引落日（任意・1〜28日）</span>
+        <input id="ruleDay" type="number" min="1" max="28" step="1" inputmode="numeric" placeholder="25">
+      </label>
+      <p class="form-error" id="ruleError" role="alert" hidden></p>
+      <button class="primary-button" id="ruleSubmitButton" type="submit">ルールを追加</button>
+    </form>
+  </dialog>
+
   <input id="receiptInput" type="file" accept="image/*" capture="environment" hidden>
   <button id="addEntryButton" class="fab" type="button" hidden>＋ 記録する</button>
 

@@ -17,6 +17,18 @@ const FORECAST_PATTERNS = [
   { category: "外食", label: "外食", perWeek: 2.5, fixedTicket: 8000, liveTicket: true },
   { category: "嗜好品", label: "嗜好品", perWeek: 3, fixedTicket: 600 }
 ];
+// 予測ルール（帳簿ごとに自分で定義する月末予測の材料）: 定期ルールは個人帳簿の予測の土台、特別費用はどの帳簿でも上乗せ
+const RULE_KINDS = {
+  weekday: { label: "平日のみ・毎日", needsCount: false },
+  daily: { label: "毎日", needsCount: false },
+  weekend: { label: "土日のみ・毎日", needsCount: false },
+  weekly: { label: "週に○回", needsCount: true },
+  monthly: { label: "月に○回", needsCount: true },
+  once: { label: "特別費用（表示中の月だけ）", needsCount: false },
+  fixed: { label: "特別費用（毎月）", needsCount: false },
+  running: { label: "ランニングコスト（毎月）", needsCount: false, needsDay: true }
+};
+const RECURRING_KINDS = ["weekday", "daily", "weekend", "weekly", "monthly"];
 
 const state = {
   data: null,
@@ -36,6 +48,7 @@ const state = {
   needsPin: false,
   book: "共有",
   editingRow: null,
+  rules: [],
   stateHash: "",
   currentEntry: null,
   pollTimer: null
@@ -65,7 +78,10 @@ const els = {};
   "pinError", "budgetNote", "addEntryButton", "entryFormDialog", "entryForm", "formDate", "diningStatus",
   "formStore", "formCategory", "formAmount", "formMemo", "formError", "formSubmitButton",
   "closeEntryFormButton", "deleteEntryButton", "receiptButton", "receiptInput",
-  "formBook", "storeHints", "entryFormTitle", "editEntryButton"
+  "formBook", "storeHints", "entryFormTitle", "editEntryButton",
+  "rulesButton", "rulesDialog", "closeRulesButton", "rulesList", "ruleForm",
+  "ruleKind", "ruleName", "ruleAmount", "ruleCount", "ruleCountWrap", "ruleError",
+  "ruleDayWrap", "ruleDay"
 ].forEach((id) => { els[id] = document.getElementById(id); });
 
 function readJsonStorage(key, fallback) {
@@ -211,12 +227,107 @@ function monthStats(ym) {
   const nowKey = browserMonthKey();
   const elapsed = ym === nowKey ? new Date().getDate() : daysInMonth(ym);
   const dailyAverage = elapsed > 0 ? total / elapsed : 0;
-  const fc = ym === nowKey && elapsed > 0 ? forecastForMonth(ym, items, byCategory, total, elapsed) : null;
+  const fc = ym === nowKey && elapsed > 0 ? forecastForBook(ym, items, byCategory, total, elapsed) : null;
   const forecast = fc ? fc.amount : null;
   const forecastNotes = fc ? fc.notes : [];
   const forecastFallback = fc ? fc.usedFallback : false;
+  const forecastLines = fc ? (fc.lines || []) : [];
+  const rulesBased = fc ? Boolean(fc.rulesBased) : false;
   const dining = fc ? fc.dining : null;
-  return { items, total, byDate, byCategory, prevTotal, elapsed, dailyAverage, forecast, forecastNotes, forecastFallback, dining };
+  return { items, total, byDate, byCategory, prevTotal, elapsed, dailyAverage, forecast, forecastNotes, forecastFallback, forecastLines, rulesBased, dining };
+}
+
+function rulesForBook(book) {
+  return (state.rules || []).filter((rule) => (rule.book || "共有") === book);
+}
+
+function remainingDayRange(ym) {
+  const now = new Date();
+  const currentKey = browserMonthKey();
+  const dim = daysInMonth(ym);
+  if (ym < currentKey) return { from: 1, to: 0, days: 0, dim };
+  if (ym === currentKey) {
+    const from = now.getDate() + 1;
+    return { from, to: dim, days: Math.max(0, dim - from + 1), dim };
+  }
+  return { from: 1, to: dim, days: dim, dim };
+}
+
+function countDaysMatching(ym, range, predicate) {
+  const [y, m] = ym.split("-").map(Number);
+  let count = 0;
+  for (let d = range.from; d <= range.to; d++) {
+    if (predicate(new Date(y, m - 1, d).getDay())) count++;
+  }
+  return count;
+}
+
+function computeRuleAmount(rule, ym) {
+  const amount = Number(rule.amount) || 0;
+  if (!(amount > 0)) return 0;
+  const currentKey = browserMonthKey();
+  if (rule.kind === "once") return rule.month === ym ? amount : 0;
+  if (rule.kind === "fixed" || rule.kind === "running") return ym >= currentKey ? amount : 0;
+  const range = remainingDayRange(ym);
+  if (range.days <= 0) return 0;
+  const count = Math.max(0, Number(rule.count) || 0);
+  if (rule.kind === "daily") return amount * range.days;
+  if (rule.kind === "weekday") return amount * countDaysMatching(ym, range, (dow) => dow >= 1 && dow <= 5);
+  if (rule.kind === "weekend") return amount * countDaysMatching(ym, range, (dow) => dow === 0 || dow === 6);
+  if (rule.kind === "weekly") return Math.round(amount * count * range.days / 7);
+  if (rule.kind === "monthly") return Math.round(amount * count * range.days / range.dim);
+  return 0;
+}
+
+function ruleDescription(rule, ym) {
+  const value = computeRuleAmount(rule, ym || state.selectedMonth);
+  const name = rule.name || RULE_KINDS[rule.kind]?.label || "ルール";
+  return `${name}: ${yen(value)}`;
+}
+
+function forecastForBook(ym, items, byCategory, total, elapsed) {
+  const rules = rulesForBook(state.book);
+  const recurring = rules.filter((rule) => RECURRING_KINDS.includes(rule.kind));
+  const specials = rules.filter((rule) => !RECURRING_KINDS.includes(rule.kind) && rule.kind !== "running");
+  const running = rules.filter((rule) => rule.kind === "running");
+  const runningSum = running.reduce((acc, rule) => acc + computeRuleAmount(rule, ym), 0);
+  const runningLine = runningSum > 0
+    ? [`ランニングコスト: ${yen(runningSum)}（${running.map((rule) => rule.name || "固定費").join("・")}）`]
+    : [];
+  const specialLines = [
+    ...specials
+      .map((rule) => ({ rule, value: computeRuleAmount(rule, ym) }))
+      .filter((x) => x.value > 0)
+      .map((x) => `${x.rule.name || "特別費用"}: ${yen(x.value)}`),
+    ...runningLine
+  ];
+  const specialSum = specials.reduce((acc, rule) => acc + computeRuleAmount(rule, ym), 0) + runningSum;
+
+  if (state.book !== "共有" || recurring.length > 0) {
+    // 個人帳簿（と定期ルールのある帳簿）は、自分で定義したルールで予測する
+    let amount = total;
+    const lines = [];
+    recurring.forEach((rule) => {
+      const value = computeRuleAmount(rule, ym);
+      amount += value;
+      lines.push(ruleDescription(rule, ym));
+    });
+    amount += specialSum;
+    lines.push(...specialLines);
+    const notes = recurring.length || specialLines.length
+      ? lines.slice()
+      : ["予測ルール未設定（ルールを追加すると残りの見込みが出ます）"];
+    return { amount: Math.round(amount), notes, lines, usedFallback: false, dining: null, rulesBased: true };
+  }
+
+  const base = forecastForMonth(ym, items, byCategory, total, elapsed);
+  if (specialSum > 0) {
+    base.amount += specialSum;
+    base.notes = [...base.notes, ...specialLines];
+    base.lines = specialLines;
+  }
+  base.rulesBased = false;
+  return base;
 }
 
 function forecastForMonth(ym, items, byCategory, total, elapsed) {
@@ -394,7 +505,7 @@ function applyEntries(entries) {
     state.selectedMonth = dataMonths.sort().reverse()[0] || current;
     state.selectedDate = latestSpendDate(state.selectedMonth);
   }
-  state.stateHash = JSON.stringify([state.entries, state.budgets]);
+  state.stateHash = JSON.stringify([state.entries, state.budgets, state.rules]);
 }
 
 function updateBookSwitch() {
@@ -465,6 +576,8 @@ async function connectWithPin(pin, silent = false) {
   state.categories = [...DEFAULT_CATEGORIES];
   state.budgets = flattenBudgets(json.budgets);
   writeJsonStorage("kakeibo.budgets", state.budgets);
+  state.rules = Array.isArray(json.forecastRules) ? json.forecastRules : [];
+  writeJsonStorage("kakeibo.rules", state.rules);
   applyEntries((json.entries || []).map(normalizeApiEntry));
   finishLoad(`共有データ ・ ${timeLabel()} 同期`);
   startPolling();
@@ -476,13 +589,16 @@ async function refreshShared(silent = true) {
   try {
     const json = await apiGetState();
     const nextBudgets = flattenBudgets(json.budgets);
+    const nextRules = Array.isArray(json.forecastRules) ? json.forecastRules : [];
     const nextEntries = (json.entries || []).map(normalizeApiEntry)
       .filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry.date));
-    const hash = JSON.stringify([nextEntries, nextBudgets]);
+    const hash = JSON.stringify([nextEntries, nextBudgets, nextRules]);
     state.connected = true;
     if (hash !== state.stateHash) {
       state.budgets = nextBudgets;
       writeJsonStorage("kakeibo.budgets", state.budgets);
+      state.rules = nextRules;
+      writeJsonStorage("kakeibo.rules", state.rules);
       state.categories = [...DEFAULT_CATEGORIES];
       applyEntries(nextEntries);
       buildMonthSelect();
@@ -535,6 +651,7 @@ async function loadData(showLoading = true) {
     state.data = converted;
     state.categories = converted.categories;
     state.budgets = flattenLocalBudgets(readJsonStorage("kakeibo.budgets", {}));
+    state.rules = readJsonStorage("kakeibo.rules", []);
     applyEntries(converted.entries);
     finishLoad(converted.updated_at ? `最終更新 ${converted.updated_at}` : "保存済みデータ");
   } catch (error) {
@@ -603,9 +720,16 @@ function renderHome() {
   els.activeDays.textContent = `${stats.byDate.size}日`;
   els.entryCount.textContent = `${stats.items.length}件`;
   els.forecastAmount.textContent = stats.forecast == null ? "-" : yen(stats.forecast);
-  els.forecastNote.textContent = stats.forecastNotes && stats.forecastNotes.length
-    ? `予測の内訳: ${stats.forecastNotes.join(" ・ ")}（${stats.forecastFallback ? "買い物単価は全体の平均で仮置き" : "外食は実績の平均単価、嗜好品は申告の平均単価で計算"}）`
-    : "";
+  if (stats.rulesBased) {
+    const lines = stats.forecastLines && stats.forecastLines.length ? stats.forecastLines : (stats.forecastNotes || []);
+    els.forecastNote.textContent = lines.length
+      ? `予測の内訳（実績 ${yen(stats.total)} ＋ 残りの見込み）: ${lines.join(" ・ ")}`
+      : "予測ルール未設定です。「予測ルールを編集」から追加できます";
+  } else {
+    els.forecastNote.textContent = stats.forecastNotes && stats.forecastNotes.length
+      ? `予測の内訳: ${stats.forecastNotes.join(" ・ ")}（${stats.forecastFallback ? "買い物単価は全体の平均で仮置き" : "外食は実績の平均単価、嗜好品は申告の平均単価で計算"}）`
+      : "";
+  }
   if (stats.dining) {
     const d = stats.dining;
     const dayparts = [];
@@ -971,6 +1095,7 @@ els.monthlyCards.appendChild(card);
 
 function openEntryDialog(entry) {
 state.currentEntry = entry;
+if (typeof resetDeleteButton === "function") resetDeleteButton();
 els.deleteEntryButton.hidden = !(state.connected && entry.row);
 els.editEntryButton.hidden = !(state.connected && entry.row);
 const sameReceipt = state.entries.filter((item) => item.date === entry.date && (item.receipt_id === entry.receipt_id || item.store === entry.store))
@@ -1225,6 +1350,110 @@ els.closeEntryFormButton.addEventListener("click", () => {
 state.editingRow = null;
 els.entryFormDialog.close();
 });
+
+function renderRulesList() {
+const rules = rulesForBook(state.book);
+if (!rules.length) {
+els.rulesList.innerHTML = `<p class="rules-empty">${escapeHtml(state.book)} の予測ルールはまだありません。</p>`;
+return;
+}
+const groups = [
+{ title: "定期ルール", items: rules.filter((rule) => RECURRING_KINDS.includes(rule.kind)) },
+{ title: "ランニングコスト（毎月）", items: rules.filter((rule) => rule.kind === "running") },
+{ title: "特別費用", items: rules.filter((rule) => rule.kind === "once" || rule.kind === "fixed") }
+];
+els.rulesList.innerHTML = groups.filter((group) => group.items.length).map((group) => {
+const subtotal = group.items.reduce((acc, rule) => acc + computeRuleAmount(rule, state.selectedMonth), 0);
+const rows = group.items.map((rule) => {
+const meta = RULE_KINDS[rule.kind] || {};
+const countText = meta.needsCount ? ` ・ ${rule.count || 0}回` : "";
+const monthText = rule.kind === "once" ? ` ・ ${rule.month || ""}` : "";
+const dayText = rule.kind === "running" && rule.day ? ` ・ 毎月${rule.day}日` : "";
+const canDelete = state.connected ? Boolean(rule.row) : true;
+return `<div class="rule-row">
+<div class="rule-row-main"><strong>${escapeHtml(rule.name || meta.label || "ルール")}</strong><span>${escapeHtml(meta.label || "")} ・ ${yen(rule.amount)}${countText}${monthText}${dayText} ・ 今月の見込み ${yen(computeRuleAmount(rule, state.selectedMonth))}</span></div>
+${canDelete ? `<button type="button" class="rule-delete" data-rule-key="${rule.row || rule.id}">削除</button>` : ""}
+</div>`;
+}).join("");
+return `<h3>${group.title} ・ 今月 ${yen(subtotal)}</h3>${rows}`;
+}).join("");
+}
+
+function updateRuleCountVisibility() {
+const meta = RULE_KINDS[els.ruleKind.value] || {};
+els.ruleCountWrap.hidden = !meta.needsCount;
+els.ruleDayWrap.hidden = !meta.needsDay;
+}
+
+els.rulesButton.addEventListener("click", () => {
+renderRulesList();
+updateRuleCountVisibility();
+if (typeof els.rulesDialog.showModal === "function") els.rulesDialog.showModal();
+});
+els.closeRulesButton.addEventListener("click", () => els.rulesDialog.close());
+els.ruleKind.addEventListener("change", updateRuleCountVisibility);
+els.rulesList.addEventListener("click", async (event) => {
+const button = event.target.closest("[data-rule-key]");
+if (!button) return;
+const key = button.dataset.ruleKey;
+button.disabled = true;
+try {
+if (state.connected) {
+await apiPost({ action: "deleteRule", row: Number(key) });
+await refreshShared(true);
+} else {
+state.rules = state.rules.filter((rule) => String(rule.id) !== String(key));
+writeJsonStorage("kakeibo.rules", state.rules);
+}
+showToast("予測ルールを削除しました");
+} catch (_) {
+showToast("削除できませんでした");
+} finally {
+renderRulesList();
+renderAll();
+}
+});
+els.ruleForm.addEventListener("submit", async (event) => {
+event.preventDefault();
+const kind = els.ruleKind.value;
+const meta = RULE_KINDS[kind] || {};
+const rule = {
+book: state.book,
+kind,
+name: els.ruleName.value.trim(),
+amount: Number(els.ruleAmount.value) || 0,
+count: meta.needsCount ? (Number(els.ruleCount.value) || 0) : 0,
+month: kind === "once" ? state.selectedMonth : "",
+day: meta.needsDay ? (Number(els.ruleDay.value) || 0) : 0
+};
+if (!(rule.amount > 0) || (meta.needsCount && !(rule.count > 0))) {
+els.ruleError.textContent = "金額（と回数）を入れてください。";
+els.ruleError.hidden = false;
+return;
+}
+els.ruleError.hidden = true;
+try {
+if (state.connected) {
+await apiPost({ action: "addRule", rule });
+await refreshShared(true);
+} else {
+rule.id = `local-${Date.now()}`;
+state.rules = [...state.rules, rule];
+writeJsonStorage("kakeibo.rules", state.rules);
+}
+els.ruleName.value = "";
+els.ruleAmount.value = "";
+els.ruleCount.value = "";
+els.ruleDay.value = "";
+showToast("予測ルールを追加しました");
+} catch (_) {
+els.ruleError.textContent = "保存できませんでした。接続を確認してください。";
+els.ruleError.hidden = false;
+} finally {
+renderRulesList();
+renderAll();
+}
+});
 els.entryForm.addEventListener("submit", async (event) => {
 event.preventDefault();
 const entry = {
@@ -1264,10 +1493,25 @@ els.formError.hidden = false;
 els.formSubmitButton.disabled = false;
 }
 });
+let deleteArmed = false;
+let deleteArmTimer = null;
+function resetDeleteButton() {
+deleteArmed = false;
+if (deleteArmTimer) window.clearTimeout(deleteArmTimer);
+els.deleteEntryButton.textContent = "この明細を削除";
+els.deleteEntryButton.classList.remove("armed");
+}
 els.deleteEntryButton.addEventListener("click", async () => {
 const entry = state.currentEntry;
 if (!entry || !entry.row) return;
-if (!window.confirm(`${dateLabel(entry.date)} の「${entry.store}」${yen(entry.amount)} を削除しますか？`)) return;
+if (!deleteArmed) {
+deleteArmed = true;
+els.deleteEntryButton.textContent = `「${entry.store}」${yen(entry.amount)} を削除します（もう一度タップで確定）`;
+els.deleteEntryButton.classList.add("armed");
+deleteArmTimer = window.setTimeout(resetDeleteButton, 4000);
+return;
+}
+resetDeleteButton();
 try {
 await apiPost({ action: "deleteEntry", row: entry.row });
 els.entryDialog.close();

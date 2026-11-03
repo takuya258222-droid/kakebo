@@ -1,95 +1,282 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>家計簿</title>
-<style>
-  :root{ --bg:#f7f7f4; --card:#fff; --text:#222; --muted:#777; --line:#e6e6e0; --accent:#3d9970; }
-  @media (prefers-color-scheme: dark){ :root{ --bg:#17181a; --card:#222428; --text:#eee; --muted:#9a9ea6; --line:#33363b; --accent:#5cc491; } }
-  *{ box-sizing:border-box; }
-  body{ margin:0; font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; background:var(--bg); color:var(--text); }
-  main{ max-width:560px; margin:0 auto; padding:16px 14px 40px; }
-  h1{ font-size:20px; margin:6px 0 2px; }
-  .updated{ color:var(--muted); font-size:12px; margin-bottom:14px; }
-  select{ font-size:16px; padding:8px 10px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); width:100%; margin-bottom:14px; }
-  .total-card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; text-align:center; margin-bottom:14px; }
-  .total-card .label{ color:var(--muted); font-size:13px; }
-  .total-card .amount{ font-size:36px; font-weight:700; margin-top:4px; }
-  .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px 18px; margin-bottom:14px; }
-  .card h2{ font-size:15px; margin:0 0 12px; }
-  .bar-row{ display:flex; height:14px; border-radius:7px; overflow:hidden; margin-bottom:14px; background:var(--line); }
-  .bar-row div{ height:100%; }
-  table{ width:100%; border-collapse:collapse; font-size:15px; }
-  td,th{ padding:8px 2px; border-bottom:1px solid var(--line); }
-  td.num, th.num{ text-align:right; font-variant-numeric:tabular-nums; }
-  tr.sum td{ font-weight:700; border-bottom:none; }
-  .entry{ padding:10px 0; border-bottom:1px solid var(--line); }
-  .entry:last-child{ border-bottom:none; }
-  .entry .row1{ display:flex; justify-content:space-between; font-size:15px; }
-  .entry .store{ font-weight:600; }
-  .entry .meta{ color:var(--muted); font-size:12px; margin-top:2px; }
-  .empty{ color:var(--muted); font-size:14px; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="彼女と共有する、スマホで見やすい家計簿アプリ">
+  <meta name="theme-color" content="#2f7d5c">
+  <title>家計簿</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<main>
-  <h1>家計簿</h1>
-  <div class="updated" id="updated"></div>
-  <select id="month"></select>
-  <div class="total-card">
-    <div class="label" id="total-label">今月の合計</div>
-    <div class="amount" id="total">-</div>
-  </div>
-  <div class="card">
-    <h2>項目別（バランスシート）</h2>
-    <div class="bar-row" id="bar"></div>
-    <table><tbody id="bs"></tbody></table>
-  </div>
-  <div class="card">
-    <h2>明細</h2>
-    <div id="entries"></div>
-  </div>
-</main>
-<script>
-const COLORS = {"食費":"#3d9970","外食":"#e67e22","日用品":"#3498db","嗜好品":"#9b59b6","その他":"#95a5a6"};
-const yen = n => "¥" + n.toLocaleString("ja-JP");
-let DATA = null;
-function render(ym){
-  const m = DATA.months[ym]; if(!m) return;
-  const t = m.totals, total = t["合計"] || 0;
-  document.getElementById("total-label").textContent = ym.replace("-","年") + "月の合計";
-  document.getElementById("total").textContent = yen(total);
-  const bar = document.getElementById("bar"); bar.innerHTML = "";
-  for(const c of DATA.categories){
-    const v = t[c] || 0; if(!v || !total) continue;
-    const d = document.createElement("div");
-    d.style.width = (v/total*100) + "%"; d.style.background = COLORS[c]; d.title = c;
-    bar.appendChild(d);
-  }
-  const bs = document.getElementById("bs"); bs.innerHTML = "";
-  for(const c of DATA.categories){
-    const v = t[c] || 0, pct = total ? (v/total*100).toFixed(1) : "0.0";
-    bs.innerHTML += `<tr><td>${c}</td><td class="num">${yen(v)}</td><td class="num">${pct}%</td></tr>`;
-  }
-  bs.innerHTML += `<tr class="sum"><td>合計</td><td class="num">${yen(total)}</td><td class="num">100%</td></tr>`;
-  const es = document.getElementById("entries"); es.innerHTML = "";
-  if(!m.entries.length){ es.innerHTML = '<div class="empty">明細はまだありません</div>'; }
-  for(const e of m.entries){
-    es.innerHTML += `<div class="entry"><div class="row1"><span class="store">${e.store}</span><span>${yen(e.amount)}</span></div><div class="meta">${e.date} ・ ${e.category}${e.memo ? " ・ " + e.memo : ""}</div></div>`;
-  }
-}
-fetch("data.json").then(r => r.json()).then(d => {
-  DATA = d;
-  document.getElementById("updated").textContent = "最終更新: " + d.updated_at;
-  const sel = document.getElementById("month");
-  const keys = Object.keys(d.months).sort().reverse();
-  for(const k of keys){
-    const o = document.createElement("option"); o.value = k; o.textContent = k.replace("-","年") + "月"; sel.appendChild(o);
-  }
-  sel.addEventListener("change", () => render(sel.value));
-  render(keys[0]);
-}).catch(() => { document.getElementById("total").textContent = "読み込みエラー"; });
-</script>
+  <a class="skip-link" href="#main">本文へ移動</a>
+
+  <header class="app-header">
+    <div class="brand" aria-label="家計簿">
+      <span class="brand-mark" aria-hidden="true">¥</span>
+      <span>
+        <strong>家計簿</strong>
+        <small id="updatedLabel">読み込み中</small>
+      </span>
+    </div>
+    <div class="header-actions">
+      <button class="icon-button" id="themeButton" type="button" aria-label="表示テーマを切り替える" title="表示テーマ">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+      </button>
+      <button class="icon-button" id="refreshButton" type="button" aria-label="最新データに更新する" title="更新">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="app-shell">
+    <section class="month-card" aria-label="対象月の選択">
+      <button class="month-nav" id="prevMonthButton" type="button" aria-label="前の月">‹</button>
+      <label class="month-picker">
+        <span>対象月</span>
+        <select id="monthSelect" aria-label="対象月"></select>
+      </label>
+      <button class="month-nav" id="nextMonthButton" type="button" aria-label="次の月">›</button>
+      <button class="today-button" id="currentMonthButton" type="button">今月</button>
+    </section>
+
+    <div id="loadingState" class="state-card" role="status">
+      <div class="spinner" aria-hidden="true"></div>
+      <p>家計簿を読み込んでいます</p>
+    </div>
+
+    <div id="errorState" class="state-card error" hidden>
+      <h2>読み込めませんでした</h2>
+      <p>通信状態を確認して、もう一度お試しください。</p>
+      <button class="primary-button" id="retryButton" type="button">再読み込み</button>
+    </div>
+
+    <div id="appContent" hidden>
+      <section class="view-panel" id="view-home" data-panel="home" aria-label="ホーム">
+        <article class="hero-card">
+          <div class="hero-top">
+            <div>
+              <p class="eyebrow" id="heroMonthLabel">今月</p>
+              <h1 id="monthTotal">¥0</h1>
+              <p class="hero-sub" id="monthComparison">前月比 -</p>
+            </div>
+            <span class="live-badge">共有中</span>
+          </div>
+          <div class="stats-grid">
+            <div><span>1日平均</span><strong id="dailyAverage">¥0</strong></div>
+            <div><span>使った日</span><strong id="activeDays">0日</strong></div>
+            <div><span>記録</span><strong id="entryCount">0件</strong></div>
+            <div><span>月末予測</span><strong id="forecastAmount">-</strong></div>
+          </div>
+        </article>
+
+        <article class="card budget-card">
+          <div class="section-heading">
+            <div>
+              <h2>今月の予算</h2>
+              <p>この端末だけに保存されます</p>
+            </div>
+            <button class="text-button" id="editBudgetButton" type="button">設定</button>
+          </div>
+          <div id="budgetEmpty" class="empty-inline">予算を設定すると、残り金額と進み具合が分かります。</div>
+          <div id="budgetContent" hidden>
+            <div class="budget-numbers">
+              <strong id="budgetRemaining">¥0</strong>
+              <span id="budgetDetail">残り</span>
+            </div>
+            <div class="progress-track" aria-hidden="true"><div id="budgetProgress"></div></div>
+            <p class="progress-caption" id="budgetCaption"></p>
+          </div>
+          <form id="budgetForm" class="budget-form" hidden>
+            <label>
+              <span>月の予算（円）</span>
+              <input id="budgetInput" type="number" min="0" step="100" inputmode="numeric" placeholder="例：80000">
+            </label>
+            <div class="form-actions">
+              <button class="secondary-button" id="clearBudgetButton" type="button">削除</button>
+              <button class="primary-button" type="submit">保存</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <h2>項目別バランス</h2>
+              <p>項目をタップすると明細を絞り込みます</p>
+            </div>
+          </div>
+          <div class="donut-layout">
+            <div class="donut-wrap">
+              <svg id="donutChart" class="donut" viewBox="0 0 160 160" role="img" aria-label="項目別構成比グラフ"></svg>
+              <div class="donut-center"><span>合計</span><strong id="donutTotal">¥0</strong></div>
+            </div>
+            <div id="categoryLegend" class="legend-list"></div>
+          </div>
+          <div id="categoryBars" class="category-bars"></div>
+          <table class="balance-table" aria-label="項目別合計">
+            <thead><tr><th>項目</th><th>金額</th><th>構成比</th></tr></thead>
+            <tbody id="balanceTableBody"></tbody>
+          </table>
+        </article>
+
+        <article class="card">
+          <div class="section-heading chart-heading">
+            <div>
+              <h2>支出グラフ</h2>
+              <p id="chartCaption">日ごとの支出</p>
+            </div>
+            <div class="segmented" role="group" aria-label="グラフの種類">
+              <button type="button" data-chart-mode="daily" class="active">日別</button>
+              <button type="button" data-chart-mode="cumulative">累計</button>
+              <button type="button" data-chart-mode="weekday">曜日</button>
+            </div>
+          </div>
+          <div id="chartArea" class="chart-area"></div>
+          <div class="chart-foot" id="chartFoot"></div>
+        </article>
+
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <h2>今月のポイント</h2>
+              <p>よく使う店と支出の山が分かります</p>
+            </div>
+          </div>
+          <div class="insight-grid">
+            <div class="insight"><span>一番使った日</span><strong id="topDayLabel">-</strong><small id="topDayAmount">-</small></div>
+            <div class="insight"><span>一番多い店</span><strong id="topStoreLabel">-</strong><small id="topStoreAmount">-</small></div>
+            <div class="insight"><span>1件平均</span><strong id="averageEntry">¥0</strong><small>明細1件あたり</small></div>
+            <div class="insight"><span>一番大きい支出</span><strong id="largestEntryLabel">-</strong><small id="largestEntryAmount">-</small></div>
+          </div>
+          <div class="ranking-block">
+            <h3>店別の合計</h3>
+            <div id="storeRanking" class="ranking-list"></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="view-panel" id="view-daily" data-panel="daily" aria-label="日別" hidden>
+        <article class="card calendar-card">
+          <div class="section-heading">
+            <div>
+              <h2>カレンダー</h2>
+              <p>日付をタップすると、その日の明細だけ見られます</p>
+            </div>
+            <button class="text-button" id="clearDayButton" type="button">選択解除</button>
+          </div>
+          <div class="weekday-row" aria-hidden="true"><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span><span>日</span></div>
+          <div id="calendarGrid" class="calendar-grid"></div>
+        </article>
+
+        <article class="card selected-day-card" id="selectedDayCard">
+          <div class="section-heading">
+            <div>
+              <h2 id="selectedDayTitle">日別の合計</h2>
+              <p id="selectedDaySummary">日付を選ぶと詳細が出ます</p>
+            </div>
+            <strong id="selectedDayTotal"></strong>
+          </div>
+          <div id="selectedDayEntries" class="entry-list compact"></div>
+        </article>
+
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <h2>日別一覧</h2>
+              <p>使った日ごとにまとめて表示</p>
+            </div>
+          </div>
+          <div id="dailyGroups" class="daily-groups"></div>
+        </article>
+      </section>
+
+      <section class="view-panel" id="view-entries" data-panel="entries" aria-label="明細" hidden>
+        <article class="card filter-card">
+          <label class="search-box">
+            <span class="sr-only">店名やメモで検索</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="searchInput" type="search" placeholder="店名・メモ・項目で検索" autocomplete="off">
+          </label>
+          <div id="categoryChips" class="chip-row" role="group" aria-label="項目で絞り込み"></div>
+          <div class="filter-row">
+            <label>
+              <span>並び順</span>
+              <select id="sortSelect">
+                <option value="date-desc">日付が新しい順</option>
+                <option value="date-asc">日付が古い順</option>
+                <option value="amount-desc">金額が高い順</option>
+                <option value="amount-asc">金額が低い順</option>
+                <option value="store">店名順</option>
+              </select>
+            </label>
+            <button class="secondary-button" id="resetFiltersButton" type="button">条件をリセット</button>
+          </div>
+          <div id="activeDayFilter" class="active-filter" hidden>
+            <span id="activeDayFilterText"></span>
+            <button id="clearActiveDayButton" type="button" aria-label="日付の絞り込みを解除">×</button>
+          </div>
+          <div class="filter-summary" id="filterSummary"></div>
+          <div class="tool-row">
+            <button class="secondary-button" id="copySummaryButton" type="button">月のまとめをコピー</button>
+            <button class="secondary-button" id="downloadCsvButton" type="button">CSVで保存</button>
+          </div>
+        </article>
+        <div id="filteredEntries" class="entry-list standalone"></div>
+      </section>
+
+      <section class="view-panel" id="view-months" data-panel="months" aria-label="月別比較" hidden>
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <h2>月ごとの推移</h2>
+              <p>バーをタップすると、その月へ移動します</p>
+            </div>
+          </div>
+          <div id="monthlyTrend" class="monthly-trend"></div>
+          <div class="annual-summary" id="annualSummary"></div>
+        </article>
+        <div id="monthlyCards" class="monthly-cards"></div>
+      </section>
+
+      <footer class="app-footer">
+        <p>このページは閲覧用です。新しい支出は、レシート写真を送ると家計簿へ反映されます。</p>
+        <p id="dataNote"></p>
+      </footer>
+    </div>
+  </main>
+
+  <nav class="bottom-nav" aria-label="家計簿メニュー">
+    <button type="button" data-view="home" class="active">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5V21h-6v-6H9v6H3z"/></svg>
+      <span>ホーム</span>
+    </button>
+    <button type="button" data-view="daily">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+      <span>日別</span>
+    </button>
+    <button type="button" data-view="entries">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-2-1.5L14 21l-2-1.5L10 21l-2-1.5L6 21z"/><path d="M9 8h6M9 12h6"/></svg>
+      <span>明細</span>
+    </button>
+    <button type="button" data-view="months">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg>
+      <span>月別</span>
+    </button>
+  </nav>
+
+  <dialog id="entryDialog" class="entry-dialog">
+    <form method="dialog" class="dialog-close-row">
+      <h2>明細の詳細</h2>
+      <button class="icon-button" value="close" aria-label="閉じる">×</button>
+    </form>
+    <div id="entryDialogContent"></div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="app.js" defer></script>
 </body>
 </html>

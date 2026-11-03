@@ -53,6 +53,7 @@ const state = {
   savingsMode: false,
   stateHash: "",
   currentEntry: null,
+  refreshFailures: 0,
   pollTimer: null
 };
 try { state.pin = localStorage.getItem("kakeibo.pin") || ""; } catch (_) { state.pin = ""; }
@@ -578,7 +579,11 @@ function updateConnectionUi() {
   els.budgetNote.textContent = state.connected
     ? "二人で共有されます"
     : "この端末だけに保存されます（接続すると共有）";
-  if (state.connected) els.syncText.textContent = `共有に接続中 ・ ${timeLabel()} 同期`;
+  if (state.connected) {
+    els.syncText.textContent = state.refreshFailures >= 3
+      ? "接続が不安定です（自動で再接続を試みています）"
+      : `共有に接続中 ・ ${timeLabel()} 同期`;
+  }
 }
 
 function setPin(pin) {
@@ -618,6 +623,7 @@ async function refreshShared(silent = true) {
       .filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry.date));
     const hash = JSON.stringify([nextEntries, nextBudgets, nextRules, nextSavings]);
     state.connected = true;
+    state.refreshFailures = 0;
     if (hash !== state.stateHash) {
       state.budgets = nextBudgets;
       writeJsonStorage("kakeibo.budgets", state.budgets);
@@ -640,6 +646,9 @@ async function refreshShared(silent = true) {
       setPin("");
       updateConnectionUi();
       showToast("合言葉が必要になりました。再接続してください");
+    } else if (state.connected) {
+      state.refreshFailures = (state.refreshFailures || 0) + 1;
+      if (state.refreshFailures >= 3) updateConnectionUi();
     }
   }
 }
@@ -1501,6 +1510,7 @@ state.rules = [...state.rules, rule];
 writeJsonStorage("kakeibo.rules", state.rules);
 }
 els.ruleName.value = "";
+if (els.ruleSubName) els.ruleSubName.value = "";
 els.ruleAmount.value = "";
 els.ruleCount.value = "";
 els.ruleDay.value = "";

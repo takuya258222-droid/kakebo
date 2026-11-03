@@ -472,3 +472,11 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .detail-edit { width: 100%; margin-top: 16px; }
 .detail-edit[hidden] { display: none; }
+.hero-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-bottom: 12px;
+  border-radius: 18px;
+  box-shadow: 0 6px 18px var(--shadow);
+}

@@ -1002,7 +1002,7 @@ const selected = state.selectedDate && monthKeyFromDate(state.selectedDate) === 
 const items = selected? stats.items.filter((entry) => entry.date === selected): [...stats.items].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
 els.selectedDayTitle.textContent = selected? dateLabel(selected): "最近の明細";
 els.selectedDaySummary.textContent = selected? `${items.length}件の記録`: "選択していないため、最近の5件を表示しています";
-els.selectedDayTotal.textContent = yen(selected? sum(items): stats.total);
+els.selectedDayTotal.textContent = yen(sum(items));
 els.selectedDayEntries.replaceChildren();
 if (!items.length) {
 els.selectedDayEntries.innerHTML = '<div class="empty-message">この日の記録はありません</div>';
@@ -1121,9 +1121,20 @@ els.monthlyCards.appendChild(card);
 });
 }
 
+let deleteArmed = false;
+let deleteArmTimer = null;
+function resetDeleteButton() {
+  deleteArmed = false;
+  if (deleteArmTimer) window.clearTimeout(deleteArmTimer);
+  if (els.deleteEntryButton) {
+    els.deleteEntryButton.textContent = "この明細を削除";
+    els.deleteEntryButton.classList.remove("armed");
+  }
+}
+
 function openEntryDialog(entry) {
 state.currentEntry = entry;
-if (typeof resetDeleteButton === "function") resetDeleteButton();
+resetDeleteButton();
 els.deleteEntryButton.hidden = !(state.connected && entry.row);
 els.editEntryButton.hidden = !(state.connected && entry.row);
 const sameReceipt = state.entries.filter((item) => item.date === entry.date && (item.receipt_id === entry.receipt_id || item.store === entry.store))
@@ -1520,7 +1531,9 @@ return;
 els.formSubmitButton.disabled = true;
 try {
 if (state.editingRow) {
-await apiPost({ action: "updateEntry", row: state.editingRow, entry });
+const original = state.entries.find((item) => item.row === state.editingRow);
+const expect = original ? { date: original.date, store: original.store, amount: original.amount } : null;
+await apiPost({ action: "updateEntry", row: state.editingRow, entry, expect });
 showToast("更新しました");
 } else {
 await apiPost({ action: "addEntry", entry });
@@ -1534,21 +1547,16 @@ state.selectedDate = entry.date;
 buildMonthSelect();
 await refreshShared(true);
 setView("daily");
-} catch (_) {
-els.formError.textContent = "保存できませんでした。接続を確認してください。";
+} catch (error) {
+els.formError.textContent = error && error.code === "conflict"
+  ? "ほかの変更と競合しました。画面を更新してからやり直してください。"
+  : "保存できませんでした。接続を確認してください。";
 els.formError.hidden = false;
+if (error && error.code === "conflict") { els.entryFormDialog.close(); await refreshShared(false); }
 } finally {
 els.formSubmitButton.disabled = false;
 }
 });
-let deleteArmed = false;
-let deleteArmTimer = null;
-function resetDeleteButton() {
-deleteArmed = false;
-if (deleteArmTimer) window.clearTimeout(deleteArmTimer);
-els.deleteEntryButton.textContent = "この明細を削除";
-els.deleteEntryButton.classList.remove("armed");
-}
 els.deleteEntryButton.addEventListener("click", async () => {
 const entry = state.currentEntry;
 if (!entry || !entry.row) return;
@@ -1561,11 +1569,17 @@ return;
 }
 resetDeleteButton();
 try {
-await apiPost({ action: "deleteEntry", row: entry.row });
+await apiPost({ action: "deleteEntry", row: entry.row, expect: { date: entry.date, store: entry.store, amount: entry.amount } });
 els.entryDialog.close();
 showToast("削除しました");
 await refreshShared(true);
-} catch (_) { showToast("削除できませんでした"); }
+} catch (error) {
+if (error && error.code === "conflict") {
+  els.entryDialog.close();
+  showToast("ほかの変更と競合しました。最新の状態に更新します");
+  await refreshShared(false);
+} else { showToast("削除できませんでした"); }
+}
 });
 els.receiptButton.addEventListener("click", () => els.receiptInput.click());
 els.receiptInput.addEventListener("change", async () => {
@@ -1687,7 +1701,7 @@ function renderSavings() {
     els.savingsGoals.append(row);
   });
 
-  const sorted = [...state.savings.movements].sort((a, b) => (b.date + String(b.row || "")).localeCompare(a.date + String(a.row || "")));
+  const sorted = [...state.savings.movements].sort((a, b) => b.date.localeCompare(a.date) || (Number(b.row) || 0) - (Number(a.row) || 0));
   els.savingsList.innerHTML = sorted.length ? "" : `<p class="empty-note">貯金の記録はまだありません</p>`;
   sorted.slice(0, 60).forEach((movement) => {
     const row = document.createElement("div");
@@ -1717,6 +1731,7 @@ function renderSavings() {
     els.savingsList.append(row);
   });
 
+  const previousGoalSelection = els.savingGoalSelect.value;
   els.savingGoalSelect.innerHTML = "";
   const common = document.createElement("option");
   common.value = "";
@@ -1728,6 +1743,9 @@ function renderSavings() {
     option.textContent = goal.name;
     els.savingGoalSelect.append(option);
   });
+  if (previousGoalSelection && state.savings.goals.some((goal) => goal.name === previousGoalSelection)) {
+    els.savingGoalSelect.value = previousGoalSelection;
+  }
 }
 
 function openSavingForm() {

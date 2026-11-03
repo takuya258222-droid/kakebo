@@ -518,3 +518,23 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .saving-amount { font-weight: 800; white-space: nowrap; }
 .saving-amount.in { color: var(--brand-strong); }
 .saving-amount.out { color: #b3261e; }
+
+/* ==== 読みやすさ調整（2026-11-03） ==== */
+:root { --muted: #57645c; }
+html[data-theme="dark"] { --muted: #b3c0b7; }
+body { line-height: 1.55; }
+.section-heading h2 { font-size: 19px; }
+.section-heading p { font-size: 12.5px; }
+.hero-amount { letter-spacing: -.01em; }
+.entry-main strong { font-size: 15px; }
+.entry-main small { font-size: 12px; }
+.entry-amount { font-size: 15px; }
+.entry-button { padding-top: 13px; padding-bottom: 13px; }
+.bottom-nav button { font-size: 12px; }
+.book-switch button { font-size: 15px; font-weight: 800; }
+.progress-caption { font-size: 12.5px; }
+.dialog-note { font-size: 13px; line-height: 1.65; }
+.stats-grid span { font-size: 12px; }
+.mini-button { font-size: 12.5px; padding: 7px 12px; }
+.saving-row-main span { font-size: 13px; }
+.goal-row-head span { font-size: .92rem; }

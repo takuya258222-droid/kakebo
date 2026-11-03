@@ -1609,6 +1609,12 @@ function normalizeSavings(raw) {
   return { movements, goals };
 }
 
+function savingDateLabel(dateStr) {
+  const parts = String(dateStr || "").split("-");
+  if (parts.length !== 3) return String(dateStr || "");
+  return `${Number(parts[1])}/${Number(parts[2])}`;
+}
+
 function savingsBalance(goalName) {
   return state.savings.movements
     .filter((m) => !goalName || m.goal === goalName)
@@ -1638,7 +1644,7 @@ function renderSavings() {
   if (!els.savingsTotal) return;
   const balance = savingsBalance("");
   els.savingsTotal.textContent = yen(balance);
-  const nowKey = monthKeyOf(new Date());
+  const nowKey = browserMonthKey();
   els.savingsMonthNet.textContent = signedYen(savingsMonthNet(nowKey));
   const average = savingsMonthlyAverage();
   els.savingsPace.textContent = average > 0 ? `月 ${yen(average)}` : "—";
@@ -1688,7 +1694,7 @@ function renderSavings() {
     row.className = "saving-row";
     const title = [movement.goal, movement.memo].filter(Boolean).join(" ・ ") || (movement.type === "入金" ? "貯金" : "取り崩し");
     row.innerHTML = `
-      <div class="saving-row-main"><strong></strong><span>${formatShortDate(movement.date)} ・ ${movement.type}</span></div>
+      <div class="saving-row-main"><strong></strong><span>${savingDateLabel(movement.date)} ・ ${movement.type}</span></div>
       <span class="saving-amount ${movement.type === "入金" ? "in" : "out"}">${movement.type === "入金" ? "+" : "−"}${yen(movement.amount)}</span>
       <button class="mini-button danger" type="button">削除</button>`;
     row.querySelector("strong").textContent = title;

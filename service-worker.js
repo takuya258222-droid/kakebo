@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "kakeibo-app-v4";
+const CACHE_NAME = "kakeibo-app-v5";
 const APP_SHELL = [
   "./",
   "./index.html",

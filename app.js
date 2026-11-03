@@ -723,7 +723,7 @@ function latestSpendDate(ym) {
 }
 
 function renderAll() {
-  renderSavings();
+  try { renderSavings(); } catch (error) { console.error(error); }
   renderHome();
   renderDaily();
   renderEntries();

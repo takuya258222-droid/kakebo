@@ -87,7 +87,8 @@ const els = {};
   "savingsTotal", "savingsMonthNet", "savingsPace", "savingsCount", "savingsNote",
   "savingsGoals", "goalForm", "goalName", "goalTarget", "savingsList",
   "savingFormDialog", "savingForm", "closeSavingFormButton", "savingDate", "savingType",
-  "savingAmount", "savingGoalSelect", "savingMemo", "savingError", "savingSubmitButton"
+  "savingAmount", "savingGoalSelect", "savingMemo", "savingError", "savingSubmitButton",
+  "ruleSubWrap", "ruleSubName"
 ].forEach((id) => { els[id] = document.getElementById(id); });
 
 function readJsonStorage(key, fallback) {
@@ -1422,6 +1423,7 @@ els.ruleDayWrap.hidden = !meta.needsDay;
 
 function updateRuleNameVisibility() {
 els.ruleNameWrap.hidden = els.ruleNamePreset.value !== "__custom";
+els.ruleSubWrap.hidden = els.ruleNamePreset.value !== "サブスク";
 }
 
 els.rulesButton.addEventListener("click", () => {
@@ -1458,10 +1460,15 @@ els.ruleForm.addEventListener("submit", async (event) => {
 event.preventDefault();
 const kind = els.ruleKind.value;
 const meta = RULE_KINDS[kind] || {};
+let resolvedRuleName = els.ruleNamePreset.value === "__custom" ? els.ruleName.value.trim() : els.ruleNamePreset.value;
+if (els.ruleNamePreset.value === "サブスク") {
+const subName = els.ruleSubName.value.trim();
+if (subName) resolvedRuleName = `サブスク（${subName}）`;
+}
 const rule = {
 book: state.book,
 kind,
-name: els.ruleNamePreset.value === "__custom" ? els.ruleName.value.trim() : els.ruleNamePreset.value,
+name: resolvedRuleName,
 amount: Number(els.ruleAmount.value) || 0,
 count: meta.needsCount ? (Number(els.ruleCount.value) || 0) : 0,
 month: kind === "once" ? state.selectedMonth : "",

@@ -76,7 +76,7 @@ const els = {};
   "monthlyTrend", "annualSummary", "monthlyCards", "dataNote", "themeButton", "refreshButton",
   "retryButton", "copySummaryButton", "downloadCsvButton", "entryDialog", "entryDialogContent",
   "toast", "editBudgetButton", "budgetEmpty", "budgetContent", "budgetRemaining", "budgetDetail",
-  "budgetProgress", "budgetCaption", "budgetForm", "budgetInput", "clearBudgetButton",
+  "budgetProgress", "budgetCaption", "budgetForm", "budgetInput", "clearBudgetButton", "budgetCloseButton",
   "syncBadge", "syncBar", "syncText", "disconnectButton", "loginCard", "pinForm", "pinInput", "forecastNote",
   "pinError", "budgetNote", "addEntryButton", "entryFormDialog", "entryForm", "formDate", "diningStatus",
   "formStore", "formCategory", "formAmount", "formMemo", "formError", "formSubmitButton",
@@ -318,13 +318,15 @@ function forecastForBook(ym, items, byCategory, total, elapsed) {
     recurring.forEach((rule) => {
       const value = computeRuleAmount(rule, ym);
       amount += value;
-      lines.push(ruleDescription(rule, ym));
+      if (value > 0) lines.push(ruleDescription(rule, ym));
     });
     amount += specialSum;
     lines.push(...specialLines);
-    const notes = recurring.length || specialLines.length
+    const notes = lines.length
       ? lines.slice()
-      : ["予測ルール未設定（ルールを追加すると残りの見込みが出ます）"];
+      : (recurring.length || specialLines.length
+        ? ["残りの見込みは ¥0 です"]
+        : ["予測ルール未設定（ルールを追加すると残りの見込みが出ます）"]);
     return { amount: Math.round(amount), notes, lines, usedFallback: false, dining: null, rulesBased: true };
   }
 
@@ -1315,6 +1317,9 @@ const budget = Number(state.budgets[budgetKey()]) || "";
 els.budgetInput.value = budget;
 els.budgetForm.hidden =!els.budgetForm.hidden;
 if (!els.budgetForm.hidden) els.budgetInput.focus();
+});
+els.budgetCloseButton.addEventListener("click", () => {
+els.budgetForm.hidden = true;
 });
 els.budgetForm.addEventListener("submit", async (event) => {
 event.preventDefault();

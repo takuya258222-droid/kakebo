@@ -268,8 +268,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .day-group .entry-button:last-child { border-bottom: 0; }
 .entry-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 14px; color: white; font-size: 12px; font-weight: 900; }
 .entry-main { min-width: 0; }
-.entry-main strong { display: block; font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
-.entry-main small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.entry-main strong { display: block; font-size: 14px; line-height: 1.4; overflow-wrap: break-word; }
+.entry-main small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.45; overflow-wrap: break-word; }
 .entry-amount { font-weight: 900; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .empty-message { padding: 22px 10px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.7; }
 

@@ -43,9 +43,7 @@ const state = {
   chartMode: "daily",
   view: "home",
   budgets: readJsonStorage("kakeibo.budgets", {}),
-  pin: "",
   connected: false,
-  needsPin: false,
   book: "共有",
   editingRow: null,
   rules: [],
@@ -56,7 +54,7 @@ const state = {
   refreshFailures: 0,
   pollTimer: null
 };
-try { state.pin = localStorage.getItem("kakeibo.pin") || ""; } catch (_) { state.pin = ""; }
+try { localStorage.removeItem("kakeibo.pin"); } catch (_) {}
 try {
   const savedBook = localStorage.getItem("kakeibo.book") || "";
   if (BOOKS.includes(savedBook)) state.book = savedBook;
@@ -77,8 +75,8 @@ const els = {};
   "retryButton", "copySummaryButton", "downloadCsvButton", "entryDialog", "entryDialogContent",
   "toast", "editBudgetButton", "budgetEmpty", "budgetContent", "budgetRemaining", "budgetDetail",
   "budgetProgress", "budgetCaption", "budgetForm", "budgetInput", "clearBudgetButton", "budgetCloseButton",
-  "syncBadge", "syncBar", "syncText", "disconnectButton", "loginCard", "pinForm", "pinInput", "forecastNote",
-  "pinError", "budgetNote", "addEntryButton", "entryFormDialog", "entryForm", "formDate", "diningStatus",
+  "syncBadge", "syncBar", "syncText", "forecastNote",
+  "budgetNote", "addEntryButton", "entryFormDialog", "entryForm", "formDate", "diningStatus",
   "formStore", "formCategory", "formAmount", "formMemo", "formError", "formSubmitButton",
   "closeEntryFormButton", "deleteEntryButton", "receiptButton", "receiptInput",
   "formBook", "storeHints", "entryFormTitle", "editEntryButton",
@@ -471,7 +469,7 @@ function apiError(code) {
 }
 
 async function apiGetState() {
-  const url = `${API_URL}?action=state&pin=${encodeURIComponent(state.pin)}&ts=${Date.now()}`;
+  const url = `${API_URL}?action=state&ts=${Date.now()}`;
   const response = await fetch(url, { cache: "no-store" });
   const json = await response.json();
   if (!json.ok) throw apiError(json.error);
@@ -482,7 +480,7 @@ async function apiPost(payload) {
   const response = await fetch(API_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ pin: state.pin, ...payload })
+    body: JSON.stringify(payload)
   });
   const json = await response.json();
   if (!json.ok) throw apiError(json.error);
@@ -572,8 +570,6 @@ function timeLabel() {
 }
 
 function updateConnectionUi() {
-  const configured = Boolean(API_URL);
-  els.loginCard.hidden = !configured || state.connected || !state.needsPin;
   els.syncBar.hidden = !state.connected;
   els.addEntryButton.hidden = !state.connected;
   els.receiptButton.hidden = !state.connected || state.savingsMode;
@@ -588,19 +584,9 @@ function updateConnectionUi() {
   }
 }
 
-function setPin(pin) {
-  state.pin = pin || "";
-  try {
-    if (state.pin) localStorage.setItem("kakeibo.pin", state.pin);
-    else localStorage.removeItem("kakeibo.pin");
-  } catch (_) {}
-}
-
-async function connectWithPin(pin, silent = false) {
-  setPin(pin);
+async function connectShared(silent = false) {
   const json = await apiGetState();
   state.connected = true;
-  state.needsPin = false;
   state.categories = [...DEFAULT_CATEGORIES];
   state.budgets = flattenBudgets(json.budgets);
   writeJsonStorage("kakeibo.budgets", state.budgets);
@@ -642,13 +628,7 @@ async function refreshShared(silent = true) {
     }
     updateConnectionUi();
   } catch (error) {
-    if (error.code === "unauthorized" || error.code === "pin_not_set") {
-      state.connected = false;
-      state.needsPin = true;
-      setPin("");
-      updateConnectionUi();
-      showToast("合言葉が必要になりました。再接続してください");
-    } else if (state.connected) {
+    if (state.connected) {
       state.refreshFailures = (state.refreshFailures || 0) + 1;
       if (state.refreshFailures >= 3) updateConnectionUi();
     }
@@ -670,14 +650,12 @@ async function loadData(showLoading = true) {
   }
   if (API_URL) {
     try {
-      await connectWithPin(state.pin, true);
+      await connectShared(true);
       return;
     } catch (error) {
       state.connected = false;
-      if (error.code === "unauthorized" || error.code === "pin_not_set") {
-        state.needsPin = true;
-        setPin("");
-      }
+      console.error(error);
+      showToast("共有に接続できませんでした");
     }
   }
   try {
@@ -1351,30 +1329,6 @@ delete state.budgets[budgetKey()];
 writeJsonStorage("kakeibo.budgets", state.budgets);
 renderBudget(monthStats(state.selectedMonth));
 showToast("予算を削除しました");
-});
-els.pinForm.addEventListener("submit", async (event) => {
-event.preventDefault();
-const pin = els.pinInput.value.trim();
-if (!pin) return;
-els.pinError.hidden = true;
-try {
-await connectWithPin(pin);
-els.pinInput.value = "";
-} catch (error) {
-setPin("");
-state.connected = false;
-els.pinError.textContent = error.code === "pin_not_set"
-? "合言葉がまだ設定されていません。管理者に連絡してください。"
-: "合言葉が違うか、接続できませんでした。";
-els.pinError.hidden = false;
-}
-});
-els.disconnectButton.addEventListener("click", () => {
-state.connected = false;
-setPin("");
-if (state.pollTimer) { window.clearInterval(state.pollTimer); state.pollTimer = null; }
-loadData(false);
-showToast("共有接続を解除しました");
 });
 els.addEntryButton.addEventListener("click", () => {
 if (state.savingsMode) { openSavingForm(); return; }

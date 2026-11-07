@@ -380,14 +380,14 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-weight: 700;
 }
 .sync-bar[hidden] { display: none; }
-.pin-form, .entry-form { display: grid; gap: 12px; }
-.pin-form label, .entry-form label { display: grid; gap: 6px; }
-.pin-form label span, .entry-form label span {
+.entry-form { display: grid; gap: 12px; }
+.entry-form label { display: grid; gap: 6px; }
+.entry-form label span {
   color: var(--text-2);
   font-size: 12px;
   font-weight: 800;
 }
-.pin-form input, .entry-form input, .entry-form select {
+.entry-form input, .entry-form select {
   width: 100%;
   min-height: 46px;
   padding: 10px 12px;

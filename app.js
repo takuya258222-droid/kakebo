@@ -1552,16 +1552,35 @@ if (error && error.code === "conflict") {
 });
 els.receiptButton.addEventListener("click", () => els.receiptInput.click());
 els.receiptInput.addEventListener("change", async () => {
-const file = els.receiptInput.files && els.receiptInput.files[0];
+const files = Array.from(els.receiptInput.files || []);
 els.receiptInput.value = "";
-if (!file) return;
+if (!files.length) return;
+const book = state.book;
+const totalCount = files.length;
+let sent = 0;
+let failed = 0;
+els.receiptButton.disabled = true;
 try {
-showToast("レシートを送信しています");
-const dataUrl = await fileToResizedDataUrl(file);
-await apiPost({ action: "uploadReceipt", image: dataUrl, book: state.book });
-showToast("レシートを送りました。内容はMuseが読み取って記録します");
+for (let i = 0; i < totalCount; i += 1) {
+els.receiptButton.textContent = totalCount > 1 ? `送信中 ${i + 1}/${totalCount}` : "送信中";
+try {
+const dataUrl = await fileToResizedDataUrl(files[i]);
+await apiPost({ action: "uploadReceipt", image: dataUrl, book });
+sent += 1;
 } catch (_) {
+failed += 1;
+}
+}
+} finally {
+els.receiptButton.disabled = false;
+els.receiptButton.textContent = "レシート追加";
+}
+if (sent === 0) {
 showToast("レシートを送れませんでした");
+} else if (failed === 0) {
+showToast(totalCount > 1 ? `${sent}枚のレシートを送りました。順次読み取って記録します` : "レシートを送りました。内容はClaudeが読み取って記録します");
+} else {
+showToast(`${totalCount}枚中${sent}枚を送りました（${failed}枚は失敗しました）`);
 }
 });
 document.addEventListener("visibilitychange", () => {

@@ -940,12 +940,26 @@ function renderInsights(stats) {
   });
 }
 
+function duplicateKeyOf(entry) {
+return [entry.book || "共有", entry.date, entry.store, entry.category, entry.amount].join("|");
+}
+
+function isDuplicateEntry(entry) {
+const key = duplicateKeyOf(entry);
+let count = 0;
+(state.entries || []).forEach((item) => {
+if (duplicateKeyOf(item) === key) count += 1;
+});
+return count >= 2;
+}
+
 function createEntryButton(entry) {
 const button = document.createElement("button");
 button.type = "button";
 button.className = "entry-button";
 const color = CATEGORY_COLORS[entry.category] || CATEGORY_COLORS["その他"];
-button.innerHTML = `<span class="entry-icon" style="background:${color}">${escapeHtml(entry.category.slice(0, 1))}</span><span class="entry-main"><strong>${escapeHtml(entry.store)}</strong><small>${dateLabel(entry.date)} ・ ${escapeHtml(entry.category)}${entry.memo? ` ・ ${escapeHtml(entry.memo)}`: ""}</small></span><span class="entry-amount">${yen(entry.amount)}</span>`;
+const dupBadge = isDuplicateEntry(entry) ? ` ・ <span class="dup-badge">重複かも</span>` : "";
+button.innerHTML = `<span class="entry-icon" style="background:${color}">${escapeHtml(entry.category.slice(0, 1))}</span><span class="entry-main"><strong>${escapeHtml(entry.store)}</strong><small>${dateLabel(entry.date)} ・ ${escapeHtml(entry.category)}${entry.memo? ` ・ ${escapeHtml(entry.memo)}`: ""}${dupBadge}</small></span><span class="entry-amount">${yen(entry.amount)}</span>`;
 button.addEventListener("click", () => openEntryDialog(entry));
 return button;
 }

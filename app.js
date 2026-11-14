@@ -83,7 +83,7 @@ const els = {};
   "closeEntryFormButton", "deleteEntryButton", "receiptButton", "receiptInput",
   "receiptResultDialog", "receiptResultContent", "receiptResultCloseButton",
   "quickReceiptDialog", "quickReceiptImage", "quickReceiptForm", "quickDate", "quickStore",
-  "quickCategory", "quickAmount", "quickError", "quickSubmitButton", "quickLaterButton", "quickReceiptCloseButton",
+  "quickCategory", "quickAmount", "quickError", "quickSubmitButton", "quickLaterButton", "quickReceiptCloseButton", "quickOcrNote",
   "formBook", "storeHints", "entryFormTitle", "editEntryButton",
   "rulesButton", "rulesDialog", "closeRulesButton", "rulesList", "ruleForm",
   "ruleKind", "ruleName", "ruleAmount", "ruleCount", "ruleCountWrap", "ruleError",
@@ -750,9 +750,11 @@ function openQuickReceiptForm(context) {
     quickResolve = resolve;
     quickContext = context;
     const now = new Date();
-    els.quickDate.value = formatDateKey(now.getFullYear(), now.getMonth() + 1, now.getDate());
-    els.quickStore.value = "";
-    els.quickAmount.value = "";
+    const ocr = context.ocr || null;
+    els.quickDate.value = ocr && /^\d{4}-\d{2}-\d{2}$/.test(ocr.date || "") ? ocr.date : formatDateKey(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    els.quickStore.value = ocr && ocr.store ? String(ocr.store) : "";
+    els.quickAmount.value = ocr && ocr.amount ? String(ocr.amount) : "";
+    if (els.quickOcrNote) els.quickOcrNote.hidden = !(ocr && (ocr.date || ocr.store || ocr.amount));
     els.quickError.hidden = true;
     els.quickCategory.innerHTML = state.categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
     els.quickCategory.value = "食費";
@@ -1739,7 +1741,7 @@ let failed = 0;
 els.receiptButton.disabled = true;
 try {
 for (let i = 0; i < totalCount; i += 1) {
-els.receiptButton.textContent = totalCount > 1 ? `送信中 ${i + 1}/${totalCount}` : "送信中";
+els.receiptButton.textContent = totalCount > 1 ? `読み取り中 ${i + 1}/${totalCount}` : "読み取り中…";
 let previewUrl = "";
 try {
 const dataUrl = await fileToResizedDataUrl(files[i]);
@@ -1751,7 +1753,7 @@ if (!Array.isArray(state.pendingReceipts)) state.pendingReceipts = loadPendingRe
 state.pendingReceipts.push({ fileId, book, at: Date.now() });
 savePendingReceipts();
 previewUrl = URL.createObjectURL(files[i]);
-await openQuickReceiptForm({ fileId, book, previewUrl });
+await openQuickReceiptForm({ fileId, book, previewUrl, ocr: result.ocr || null });
 }
 } catch (_) {
 failed += 1;

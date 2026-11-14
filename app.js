@@ -82,6 +82,8 @@ const els = {};
   "formStore", "formCategory", "formAmount", "formMemo", "formError", "formSubmitButton",
   "closeEntryFormButton", "deleteEntryButton", "receiptButton", "receiptInput",
   "receiptResultDialog", "receiptResultContent", "receiptResultCloseButton",
+  "quickReceiptDialog", "quickReceiptImage", "quickReceiptForm", "quickDate", "quickStore",
+  "quickCategory", "quickAmount", "quickError", "quickSubmitButton", "quickLaterButton", "quickReceiptCloseButton",
   "formBook", "storeHints", "entryFormTitle", "editEntryButton",
   "rulesButton", "rulesDialog", "closeRulesButton", "rulesList", "ruleForm",
   "ruleKind", "ruleName", "ruleAmount", "ruleCount", "ruleCountWrap", "ruleError",
@@ -660,7 +662,7 @@ async function checkPendingReceipts() {
     const matches = state.entries.filter((entry) => entry.receipt_id && entry.receipt_id.indexOf(pending.fileId) === 0);
     if (matches.length) {
       changed = true;
-      queueReceiptResult(matches);
+      if (!pending.quick) queueReceiptResult(matches);
       continue;
     }
     const age = Date.now() - (Number(pending.at) || 0);
@@ -731,6 +733,34 @@ ${entries.map((entry) => `<div class="receipt-line"><span>${yen(entry.amount)}${
     });
   });
   if (typeof els.receiptResultDialog.showModal === "function") els.receiptResultDialog.showModal();
+}
+
+/* ================= レシート即時登録 ================= */
+let quickResolve = null;
+let quickContext = null;
+function settleQuick(result) {
+  if (!quickResolve) return;
+  const resolve = quickResolve;
+  quickResolve = null;
+  quickContext = null;
+  resolve(result);
+}
+function openQuickReceiptForm(context) {
+  return new Promise((resolve) => {
+    quickResolve = resolve;
+    quickContext = context;
+    const now = new Date();
+    els.quickDate.value = formatDateKey(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    els.quickStore.value = "";
+    els.quickAmount.value = "";
+    els.quickError.hidden = true;
+    els.quickCategory.innerHTML = state.categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+    els.quickCategory.value = "食費";
+    els.quickReceiptImage.src = context.previewUrl;
+    els.quickSubmitButton.disabled = false;
+    if (typeof els.quickReceiptDialog.showModal === "function") els.quickReceiptDialog.showModal();
+    else settleQuick("later");
+  });
 }
 
 function startPolling() {
@@ -1662,6 +1692,39 @@ if (error && error.code === "conflict") {
 } else { showToast("削除できませんでした"); }
 }
 });
+if (els.quickReceiptForm) els.quickReceiptForm.addEventListener("submit", async (event) => {
+event.preventDefault();
+if (!quickContext) return;
+const date = els.quickDate.value;
+const store = els.quickStore.value.trim();
+const amount = Math.round(Number(els.quickAmount.value) || 0);
+const category = els.quickCategory.value;
+if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !store || !(amount > 0)) {
+els.quickError.textContent = "日付・店名・金額を確認してください";
+els.quickError.hidden = false;
+return;
+}
+els.quickSubmitButton.disabled = true;
+try {
+await apiPost({ action: "addEntry", entry: { date, store, category, amount, memo: "", book: quickContext.book, receiptId: `${quickContext.fileId}#即時登録` } });
+if (Array.isArray(state.pendingReceipts)) {
+const p = state.pendingReceipts.find((item) => item.fileId === quickContext.fileId);
+if (p) { p.quick = true; savePendingReceipts(); }
+}
+showToast("登録しました");
+settleQuick("registered");
+els.quickReceiptDialog.close();
+refreshShared(true);
+} catch (_) {
+els.quickError.textContent = "登録できませんでした。通信状態を確認してください";
+els.quickError.hidden = false;
+} finally {
+els.quickSubmitButton.disabled = false;
+}
+});
+if (els.quickLaterButton) els.quickLaterButton.addEventListener("click", () => { settleQuick("later"); els.quickReceiptDialog.close(); });
+if (els.quickReceiptCloseButton) els.quickReceiptCloseButton.addEventListener("click", () => { settleQuick("later"); els.quickReceiptDialog.close(); });
+if (els.quickReceiptDialog) els.quickReceiptDialog.addEventListener("close", () => settleQuick("later"));
 if (els.receiptResultCloseButton) els.receiptResultCloseButton.addEventListener("click", () => els.receiptResultDialog.close());
 if (els.receiptResultDialog) els.receiptResultDialog.addEventListener("close", () => showNextReceiptResult());
 els.receiptButton.addEventListener("click", () => els.receiptInput.click());
@@ -1677,18 +1740,23 @@ els.receiptButton.disabled = true;
 try {
 for (let i = 0; i < totalCount; i += 1) {
 els.receiptButton.textContent = totalCount > 1 ? `送信中 ${i + 1}/${totalCount}` : "送信中";
+let previewUrl = "";
 try {
 const dataUrl = await fileToResizedDataUrl(files[i]);
 const result = await apiPost({ action: "uploadReceipt", image: dataUrl, book });
 sent += 1;
 if (result && result.fileId) {
+const fileId = String(result.fileId);
 if (!Array.isArray(state.pendingReceipts)) state.pendingReceipts = loadPendingReceipts();
-state.pendingReceipts.push({ fileId: String(result.fileId), book, at: Date.now() });
+state.pendingReceipts.push({ fileId, book, at: Date.now() });
 savePendingReceipts();
+previewUrl = URL.createObjectURL(files[i]);
+await openQuickReceiptForm({ fileId, book, previewUrl });
 }
 } catch (_) {
 failed += 1;
 }
+if (previewUrl) URL.revokeObjectURL(previewUrl);
 }
 } finally {
 els.receiptButton.disabled = false;
@@ -1696,9 +1764,7 @@ els.receiptButton.textContent = "レシート追加";
 }
 if (sent === 0) {
 showToast("レシートを送れませんでした");
-} else if (failed === 0) {
-showToast(totalCount > 1 ? `${sent}枚のレシートを送りました。読み取りが終わると結果が表示されます` : "レシートを送りました。読み取りが終わると結果が表示されます");
-} else {
+} else if (failed > 0) {
 showToast(`${totalCount}枚中${sent}枚を送りました（${failed}枚は失敗しました）`);
 }
 });

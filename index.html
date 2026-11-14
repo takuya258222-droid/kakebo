@@ -463,6 +463,16 @@
     <button id="deleteEntryButton" class="danger-button" type="button" hidden>この明細を削除</button>
   </dialog>
 
+  <dialog id="receiptResultDialog" class="entry-dialog">
+    <form method="dialog" class="dialog-close-row">
+      <h2>レシートを記録しました</h2>
+      <button class="icon-button" value="close" aria-label="閉じる">×</button>
+    </form>
+    <div id="receiptResultContent"></div>
+    <p class="dialog-note">項目はプルダウンで変更できます（変更するとすぐ反映されます）。金額や店名の修正は、閉じたあとに明細をタップして編集してください。</p>
+    <button id="receiptResultCloseButton" class="primary-button" type="button">確認した</button>
+  </dialog>
+
   <dialog id="entryFormDialog" class="entry-dialog">
     <form id="entryForm" class="entry-form">
       <div class="dialog-close-row">
@@ -493,6 +503,8 @@
           <option>外食</option>
           <option>日用品</option>
           <option>嗜好品</option>
+          <option>交際費</option>
+          <option>美容</option>
           <option>その他</option>
         </select>
       </label>

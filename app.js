@@ -5,6 +5,8 @@ const CATEGORY_COLORS = {
   "外食": "#e67e22",
   "日用品": "#3488ce",
   "嗜好品": "#9b59b6",
+  "交際費": "#e84393",
+  "美容": "#0ea5b7",
   "その他": "#7f8c8d"
 };
 const DEFAULT_CATEGORIES = Object.keys(CATEGORY_COLORS);
@@ -79,6 +81,7 @@ const els = {};
   "budgetNote", "addEntryButton", "entryFormDialog", "entryForm", "formDate", "diningStatus",
   "formStore", "formCategory", "formAmount", "formMemo", "formError", "formSubmitButton",
   "closeEntryFormButton", "deleteEntryButton", "receiptButton", "receiptInput",
+  "receiptResultDialog", "receiptResultContent", "receiptResultCloseButton",
   "formBook", "storeHints", "entryFormTitle", "editEntryButton",
   "rulesButton", "rulesDialog", "closeRulesButton", "rulesList", "ruleForm",
   "ruleKind", "ruleName", "ruleAmount", "ruleCount", "ruleCountWrap", "ruleError",
@@ -497,7 +500,8 @@ function normalizeApiEntry(entry) {
   }
   base.row = Number(entry.row) || null;
   base.id = base.row ? `row-${base.row}` : base.id;
-  base.receipt_id = base.row ? `row-${base.row}` : base.receipt_id;
+  const serverReceiptId = String(entry.receiptId || entry.receipt_id || "");
+  base.receipt_id = serverReceiptId || (base.row ? `row-${base.row}` : base.receipt_id);
   return base;
 }
 
@@ -597,6 +601,7 @@ async function connectShared(silent = false) {
   applyEntries((json.entries || []).map(normalizeApiEntry));
   finishLoad(`共有データ ・ ${timeLabel()} 同期`);
   startPolling();
+  checkPendingReceipts();
   if (!silent) showToast("共有に接続しました");
 }
 
@@ -627,12 +632,105 @@ async function refreshShared(silent = true) {
       if (!silent) showToast("新しいデータに更新しました");
     }
     updateConnectionUi();
+    checkPendingReceipts();
   } catch (error) {
     if (state.connected) {
       state.refreshFailures = (state.refreshFailures || 0) + 1;
       if (state.refreshFailures >= 3) updateConnectionUi();
     }
   }
+}
+
+/* ================= レシート読み取り結果の確認 ================= */
+let receiptResultQueue = [];
+function loadPendingReceipts() {
+  const list = readJsonStorage("kakeibo.pendingReceipts", []);
+  return Array.isArray(list) ? list.filter((p) => p && p.fileId) : [];
+}
+function savePendingReceipts() {
+  writeJsonStorage("kakeibo.pendingReceipts", state.pendingReceipts || []);
+}
+async function checkPendingReceipts() {
+  if (!state.connected) return;
+  if (!Array.isArray(state.pendingReceipts)) state.pendingReceipts = loadPendingReceipts();
+  if (!state.pendingReceipts.length) return;
+  let changed = false;
+  const remaining = [];
+  for (const pending of state.pendingReceipts) {
+    const matches = state.entries.filter((entry) => entry.receipt_id && entry.receipt_id.indexOf(pending.fileId) === 0);
+    if (matches.length) {
+      changed = true;
+      queueReceiptResult(matches);
+      continue;
+    }
+    const age = Date.now() - (Number(pending.at) || 0);
+    if (age > 20 * 60 * 1000) { changed = true; continue; }
+    if (age > 4 * 60 * 1000 && !pending.checked) {
+      pending.checked = true;
+      changed = true;
+      try {
+        const res = await fetch(`${API_URL}?action=pendingReceipts&ts=${Date.now()}`, { cache: "no-store" });
+        const json = await res.json();
+        const stillWaiting = !!(json && json.ok && Array.isArray(json.files) && json.files.some((f) => f.id === pending.fileId));
+        if (!stillWaiting) {
+          showToast("レシートの記録が見つかりませんでした（重複か対象外の可能性があります）");
+          continue;
+        }
+      } catch (_) {}
+    }
+    remaining.push(pending);
+  }
+  state.pendingReceipts = remaining;
+  if (changed) savePendingReceipts();
+}
+function queueReceiptResult(entries) {
+  receiptResultQueue.push(entries);
+  showNextReceiptResult();
+}
+function showNextReceiptResult() {
+  if (!els.receiptResultDialog || els.receiptResultDialog.open) return;
+  const entries = receiptResultQueue.shift();
+  if (!entries || !entries.length) return;
+  const first = entries[0];
+  const total = sum(entries);
+  const options = (current) => state.categories.map((c) => `<option value="${escapeHtml(c)}"${c === current ? " selected" : ""}>${escapeHtml(c)}</option>`).join("");
+  els.receiptResultContent.innerHTML = `
+<div class="detail-hero"><span>${escapeHtml(first.store)}</span><strong>${yen(total)}</strong></div>
+<div class="detail-rows">
+<div class="detail-row"><span>日付</span><div>${dateLabel(first.date, true)}</div></div>
+<div class="detail-row"><span>帳簿</span><div>${escapeHtml(first.book || "共有")}</div></div>
+</div>
+<div class="receipt-block"><h3>項目（変更するとすぐ反映されます）</h3>
+${entries.map((entry) => `<div class="receipt-line"><span>${yen(entry.amount)}${entry.memo ? ` ・ ${escapeHtml(entry.memo)}` : ""}</span><select class="receipt-category-select" data-row="${entry.row}">${options(entry.category)}</select></div>`).join("")}
+</div>`;
+  els.receiptResultContent.querySelectorAll(".receipt-category-select").forEach((select) => {
+    select.addEventListener("change", async () => {
+      const row = Number(select.dataset.row);
+      const entry = state.entries.find((item) => item.row === row);
+      if (!entry) return;
+      const next = select.value;
+      if (next === entry.category) return;
+      select.disabled = true;
+      try {
+        await apiPost({ action: "updateEntry", row: entry.row, entry: { date: entry.date, store: entry.store, category: next, amount: entry.amount, memo: entry.memo, book: entry.book }, expect: { date: entry.date, store: entry.store, amount: entry.amount } });
+        entry.category = next;
+        showToast(`項目を「${next}」に変更しました`);
+        refreshShared(true);
+      } catch (error) {
+        select.value = entry.category;
+        if (error && error.code === "conflict") {
+          showToast("ほかの変更と競合しました。最新の状態に更新します");
+          els.receiptResultDialog.close();
+          refreshShared(false);
+        } else {
+          showToast("項目を変更できませんでした");
+        }
+      } finally {
+        select.disabled = false;
+      }
+    });
+  });
+  if (typeof els.receiptResultDialog.showModal === "function") els.receiptResultDialog.showModal();
 }
 
 function startPolling() {
@@ -1564,6 +1662,8 @@ if (error && error.code === "conflict") {
 } else { showToast("削除できませんでした"); }
 }
 });
+if (els.receiptResultCloseButton) els.receiptResultCloseButton.addEventListener("click", () => els.receiptResultDialog.close());
+if (els.receiptResultDialog) els.receiptResultDialog.addEventListener("close", () => showNextReceiptResult());
 els.receiptButton.addEventListener("click", () => els.receiptInput.click());
 els.receiptInput.addEventListener("change", async () => {
 const files = Array.from(els.receiptInput.files || []);
@@ -1579,8 +1679,13 @@ for (let i = 0; i < totalCount; i += 1) {
 els.receiptButton.textContent = totalCount > 1 ? `送信中 ${i + 1}/${totalCount}` : "送信中";
 try {
 const dataUrl = await fileToResizedDataUrl(files[i]);
-await apiPost({ action: "uploadReceipt", image: dataUrl, book });
+const result = await apiPost({ action: "uploadReceipt", image: dataUrl, book });
 sent += 1;
+if (result && result.fileId) {
+if (!Array.isArray(state.pendingReceipts)) state.pendingReceipts = loadPendingReceipts();
+state.pendingReceipts.push({ fileId: String(result.fileId), book, at: Date.now() });
+savePendingReceipts();
+}
 } catch (_) {
 failed += 1;
 }
@@ -1592,7 +1697,7 @@ els.receiptButton.textContent = "レシート追加";
 if (sent === 0) {
 showToast("レシートを送れませんでした");
 } else if (failed === 0) {
-showToast(totalCount > 1 ? `${sent}枚のレシートを送りました。順次読み取って記録します` : "レシートを送りました。内容はClaudeが読み取って記録します");
+showToast(totalCount > 1 ? `${sent}枚のレシートを送りました。読み取りが終わると結果が表示されます` : "レシートを送りました。読み取りが終わると結果が表示されます");
 } else {
 showToast(`${totalCount}枚中${sent}枚を送りました（${failed}枚は失敗しました）`);
 }

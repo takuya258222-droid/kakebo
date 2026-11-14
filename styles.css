@@ -333,6 +333,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .detail-hero span { color: var(--muted); font-size: 12px; }
 .detail-hero strong { display: block; margin-top: 5px; font-size: 30px; font-variant-numeric: tabular-nums; }
 .detail-rows { display: grid; gap: 0; margin-top: 12px; }
+.receipt-line { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.receipt-line select { padding: 7px 8px; border-radius: 8px; border: 1px solid var(--line); font-size: 14px; max-width: 45vw; }
 .detail-row { display: grid; grid-template-columns: 82px 1fr; gap: 12px; padding: 11px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
 .detail-row span { color: var(--muted); }
 .receipt-block { margin-top: 18px; }
